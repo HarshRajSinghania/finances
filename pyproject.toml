@@ -1,0 +1,10 @@
+[project]
+name = "finances"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "matplotlib>=3.11.1",
+    "numpy>=2.5.1",
+    "pdfplumber>=0.11.10",
+    "pypdf>=6.14.2",
+]
