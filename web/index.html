@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="Personal finance analysis read from your own statement PDFs. Runs locally; nothing is uploaded."
+    />
+    <!-- Local-only app: no analytics, no web fonts, no CDN. -->
+    <title>finances</title>
+    <script>
+      // Applied before first paint, so reloading in dark mode does not flash white.
+      try {
+        var t = localStorage.getItem("finances-theme")
+        if (t && t !== "system") document.documentElement.setAttribute("data-theme", t)
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

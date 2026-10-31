@@ -1,10 +1,46 @@
 [project]
 name = "finances"
-version = "0.1.0"
+version = "0.2.0"
+description = "Local-first personal finance analysis, from statement PDFs. Nothing leaves the machine."
 requires-python = ">=3.14"
+# pdfplumber is the only genuine dependency, and only parse.py imports it.
+# Everything downstream is standard library, so the analysis half of the
+# toolchain runs anywhere Python does.
 dependencies = [
-    "matplotlib>=3.11.1",
-    "numpy>=2.5.1",
     "pdfplumber>=0.11.10",
-    "pypdf>=6.14.2",
 ]
+
+[project.scripts]
+finances = "finances:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# A flat set of modules rather than a package directory. Setuptools cannot infer
+# that on its own and refuses to guess, so the list is spelled out — otherwise
+# the build fails and the `finances` console script never gets installed.
+py-modules = [
+    "analyze",
+    "anonymize",
+    "ask",
+    "backtest",
+    "benchmark_descriptors",
+    "cashflow",
+    "categorizer",
+    "cpi",
+    "database",
+    "engine",
+    "finances",
+    "financial_auditor",
+    "llm_enrich",
+    "models",
+    "parse",
+    "planner",
+    "reference_data",
+    "utils",
+]
+
+[tool.uv]
+package = true

@@ -158,6 +158,73 @@ CASES = [
     ("SKYVAULT DIGITAL LLC 8885551212", "Uncategorized"),
     ("NORTHSTAR HOLDINGS LLC", "Uncategorized"),
     ("TRANSACTION 4429183 REF 88213", "Uncategorized"),
+
+    # ----------------------------------------------------------------------
+    # Deposit-account shapes. Everything above is a card statement, and card
+    # statements are the easy half: a bank statement names its own transaction
+    # type in the descriptor, then buries the merchant behind a posting date.
+    # These were the cases that left 60% of real spending uncategorised.
+    # ----------------------------------------------------------------------
+
+    # Chase posting-date preambles, which hide the merchant mid-string
+    ("Recurring Card Purchase 01/01 Digitalocean.Com Digitalocean. NY Card", "Software/Tools"),
+    ("Card Purchase With Pin 02/13 Target T-1027 Dayton OH Card 1234", "Big Box"),
+    ("Card Purchase Return 03/20 Amazon Mktplace Pmts Amzn.Com/Bill WA", "Credits/Refunds"),
+    ("Recurring Card Purchase 04/17 Name-Cheap.Com* Misq Www.Namecheap", "Software/Tools"),
+    ("AplPay DOMINO'S 3384 000003384 JERSEY CITY NJ", "Dining"),
+
+    # Money between accounts you own is a transfer; money from someone else is
+    # income. Both are non-spend, but calling them the same thing is a lie.
+    ("Zelle Payment From Jordan Rivera Xk4Q8Mz2Pa71", "Income"),
+    ("Zelle Payment To Alex Chen Jpm42B81Rr9K", "Transfers/Cash"),
+    ("ATM Cash Deposit 12/26 120 Main St Dayton OH Card 1234", "Transfers/Cash"),
+    ("ATM Withdrawal 01/24 120 Main St Dayton OH Card 1234", "Transfers/Cash"),
+    ("Online Transfer From Sav ...4321 Transaction#: 12345678901", "Transfers/Cash"),
+    ("Book Transfer Credit B/O: National Financial Services LLC Smithfield RI",
+     "Transfers/Cash"),
+    ("Fid Bkg Svc LLC Moneyline Z000123456A12Bc Web ID: 1000000001", "Transfers/Cash"),
+    ("Real Time Payment Credit Recd From Aba/Contr Bnk-011000015 From:", "Income"),
+    ("Amex Send: Add Money", "Transfers/Cash"),
+    ("4410 Northwind Cafe Payroll PPD ID: 1234509876", "Income"),
+    ("State of Ohio Ohtaxrfd PPD ID: E000000001", "Income"),
+
+    # Card payments made from checking. Real outflows from the bank account,
+    # but the same money already appears as purchases on the card statement,
+    # so counting them as spending double-counts every dollar.
+    ("American Express ACH Pmt M1234 Web ID: 2000000001", "Payment"),
+    ("Discover E-Payment 1234 Web ID: 3500000001", "Payment"),
+    ("Payment To Chase Pay IN 4 (...1111)", "Payment"),
+    ("Pay IN 4 Deposit - POS Debit Anthropic* (...2222)", "Software/Tools"),
+
+    # Names glued to their city and state with no separator at all
+    ("BIG Y 46 WORCESTERWORCESTERMA", "Groceries"),
+    ("CUMBERLAND FARMS 6617WORCESTERMA", "Gas/Auto"),
+    ("CinemarkDaytonOH", "Entertainment"),
+    ("DOLLAR TREEDAYTONOH", "Shopping"),
+    ("JCPENNEY 2022DAYTONOH", "Shopping"),
+    ("833-632-2778 ELECTRIFYHUNT VALLEYMD", "Gas/Auto"),
+    ("TST* SHERPA HIMALAYAN BDENVERCO", "Dining"),
+    ("RPS*Lakeview Apar RDDaytonOH", "Rent/Housing"),
+    ("Pf Dayton OH Iclub Fees PPD ID: G000000001", "Fitness"),
+
+    # Capital One and Discover print their own MCC label on the end of the
+    # line. It is a useful last resort, but it must lose to a keyword match:
+    # a liquor store tagged "Merchandise" is still Alcohol/Bars.
+    ("VALLEY LIVE POULTRY DAYTON OH Supermarkets", "Groceries"),
+    ("SHELL10012345678 DAYTON OH Gasoline", "Gas/Auto"),
+    ("ZIPCAR TRIP CHICAGO IL Travel/Entertainment", "Travel"),
+
+    ("WWW.PERPLEXITY.AI SAN FRANCISCO CA", "Software/Tools"),
+    ("ERACTOLL 1ABCDE 877-860-1258 OH", "Transport"),
+
+    # "rent" is the one housing word that usually is not housing. Filing a car
+    # hire as Rent/Housing inflates essential spending, which is what the
+    # emergency-fund target is sized from.
+    ("ENTERPRISE RENT-A-CAR NOR", "Travel"),
+    ("AVIS RENT A CAR PHX AZ", "Travel"),
+    ("RENTAL CAR CENTER SFO", "Travel"),
+    ("GREYSTAR RENT PAYMENT", "Rent/Housing"),
+    ("APARTMENT LEASE PMT 04/01", "Rent/Housing"),
 ]
 
 if __name__ == "__main__":

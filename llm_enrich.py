@@ -5,13 +5,18 @@ llm_enrich.py — use a local LLM to clean up merchant names and categories.
 Talks to any OpenAI-compatible local server (Ollama, LM Studio, llama.cpp,
 vLLM, text-generation-webui). Nothing leaves your machine.
 
+The input is the shared store or a CSV, and the labels go back where they came
+from: run it against finances.db and the improved categories are there for
+every other tool, with no export step in between.
+
+    python llm_enrich.py                              # finances.db, labels written back
+    python llm_enrich.py finances.db -o enriched.csv  # and a CSV as well
     python llm_enrich.py transactions.csv -o transactions_enriched.csv
 
-    python llm_enrich.py transactions.csv --endpoint http://localhost:11434/v1 \
-                         --model llama3.1:8b
-    python llm_enrich.py transactions.csv --list-models           # what fits on this machine
-    python llm_enrich.py transactions.csv --only-uncategorized   # faster
-    python llm_enrich.py transactions.csv --dry-run              # show the prompt, send nothing
+    python llm_enrich.py --endpoint http://localhost:11434/v1 --model llama3.1:8b
+    python llm_enrich.py --list-models            # what fits on this machine
+    python llm_enrich.py --only-uncategorized     # faster
+    python llm_enrich.py --dry-run                # show the prompt, send nothing
 
 Model choice is automatic and size-aware: it reads how much RAM you have, skips
 anything that would not fit in 60% of it, and never auto-picks a model above
@@ -35,10 +40,14 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections import Counter, defaultdict
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from database import DEFAULT_DB, FinanceDB
+from engine import load_transactions
+from models import Transaction
+
 try:
     from categorizer import CATEGORIES          # one taxonomy for every script
 except ImportError:
@@ -430,10 +439,17 @@ def describe(m):
     return f"{m['name']}  ({p}, {gb}{q})"
 
 
-def complete(endpoint, model, prompt, temperature=0.0, timeout=240):
+def complete(endpoint, model, prompt, temperature=0.0, timeout=240, system=None):
+    """Send one completion to the local server.
+
+    ``system`` defaults to the merchant-labelling prompt. It is a parameter
+    because the discovery, sizing and transport code here is worth reusing for
+    other local-model tasks — ask.py writes SQL with it — and a system prompt
+    telling the model to reply with merchant JSON steers it badly anywhere else.
+    """
     body = {
         "model": model,
-        "messages": [{"role": "system", "content": SYSTEM},
+        "messages": [{"role": "system", "content": system or SYSTEM},
                      {"role": "user", "content": prompt}],
         "temperature": temperature,
         "stream": False,
@@ -524,10 +540,74 @@ def label_batch(endpoint, model, batch, retries=2):
     return {}, "no usable rows in response"
 
 
+def no_server_message():
+    return ("No local LLM server answered.\n"
+            "  Ollama:    ollama serve   (then: ollama pull qwen2.5:7b)\n"
+            "  LM Studio: start the local server from the Developer tab\n"
+            "  llama.cpp: llama-server -m model.gguf --port 8080\n"
+            "Then re-run, or pass --endpoint http://host:port/v1")
+
+
+def show_models(models, ram, endpoint, label, args):
+    print(f"\n{label} at {endpoint}"
+          + (f", {ram:.0f} GB RAM detected" if ram else ", RAM unknown"))
+    budget = ram * 0.60 if ram else None
+    for m in sorted(models, key=lambda m: m.get("params") or 0):
+        if m.get("gb") and budget:
+            verdict = "fits" if m["gb"] <= budget and \
+                (m.get("params") or 0) <= args.max_params else "too big"
+        else:
+            verdict = "unknown"
+        print(f"  [{verdict:>8}]  {describe(m)}")
+    if budget:
+        print(f"\nBudget: {budget:.1f} GB (60% of RAM), "
+              f"parameter ceiling {args.max_params:g}B (--max-params to change)")
+
+
+def show_device_info(models, ram, n_todo, args):
+    dev = detect_device()
+    print(f"\n{describe_device(dev)}")
+    budget = ram * 0.60 if ram else None
+    print(f"\n  {'model':<34}{'size':>8}{'fits':>7}{'est. time':>12}")
+    for m in sorted(models, key=lambda m: m.get("params") or 0):
+        fits = "yes" if (m.get("gb") and budget and m["gb"] <= budget) else "no"
+        est = estimate_minutes(m.get("gb"), dev, n_todo, args.workers)
+        t = f"{est:.0f} min" if est else "—"
+        sz = f"{m['params']:g}B" if m.get("params") else "?"
+        print(f"  {m['name'][:33]:<34}{sz:>8}{fits:>7}{t:>12}")
+    print(f"\n  for {n_todo} merchants, target {args.target_minutes:g} min")
+    print("  estimates only — the real run measures the model before committing")
+
+
+def write_store(path, txns):
+    with FinanceDB(path) as db:
+        db.upsert_transactions(txns)
+
+
+def write_csv(path, txns, extras):
+    """Transaction columns plus the LLM's own opinions, which the schema has no
+    room for: whether it thinks the charge recurs, whether it is essential, and
+    how sure it was."""
+    extra_cols = ["recurring_guess", "essential_guess", "llm_confidence",
+                  "category_llm"]
+    cols = Transaction.columns() + [c for c in extra_cols
+                                    if any(c in e for e in extras)]
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        for t, e in zip(txns, extras):
+            row = t.to_row()
+            row.update(e)
+            w.writerow({c: row.get(c, "") for c in cols})
+
+
 def main():
     ap = argparse.ArgumentParser(description="Label merchants with a local LLM.")
-    ap.add_argument("csv")
-    ap.add_argument("-o", "--output", default="transactions_enriched.csv")
+    ap.add_argument("source", nargs="?", default=DEFAULT_DB,
+                    help=f"a .db or a .csv (default {DEFAULT_DB})")
+    ap.add_argument("--db", help="the store to read, same as the positional argument")
+    ap.add_argument("-o", "--output",
+                    help="also write a CSV (the default when the source is a CSV)")
     ap.add_argument("--endpoint", help="e.g. http://localhost:11434/v1 (auto-detected if omitted)")
     ap.add_argument("--model", help="model name (otherwise the largest that fits this machine)")
     ap.add_argument("--max-params", type=float, default=14.0, metavar="B",
@@ -563,18 +643,19 @@ def main():
                     help="keep the rule-based category, add the LLM's as a second column")
     args = ap.parse_args()
 
-    with open(args.csv, newline="") as fh:
-        rows = list(csv.DictReader(fh))
+    source = args.db or args.source
+    rows = load_transactions(source)
     if not rows:
-        sys.exit("empty CSV")
+        sys.exit(f"{source} has no transactions")
 
-    counts = Counter()
-    for r in rows:
-        counts[(r.get("merchant") or r.get("description", "")).strip()] += 1
+    def merchant_of(t):
+        return (t.merchant or t.description or "").strip()
+
+    counts = Counter(merchant_of(t) for t in rows)
     targets = [m for m, c in counts.items() if m and c >= args.min_count]
     if args.only_uncategorized:
-        uncat = {(r.get("merchant") or "").strip() for r in rows
-                 if r.get("category", "Uncategorized") in ("", "Uncategorized")}
+        uncat = {merchant_of(t) for t in rows
+                 if (t.category or "Uncategorized") in ("", "Uncategorized")}
         targets = [m for m in targets if m in uncat]
 
     cache = {}
@@ -585,7 +666,7 @@ def main():
             print(f"cache {args.cache} was unreadable, starting fresh")
     todo = [m for m in targets if m not in cache and not m.startswith("__")]
 
-    print(f"{len(rows):,} transactions, {len(counts)} distinct merchants")
+    print(f"{source}: {len(rows):,} transactions, {len(counts)} distinct merchants")
     n_cached = len([k for k in cache if not k.startswith("__")])
     print(f"{len(targets)} in scope, {n_cached} already cached, {len(todo)} to label")
 
@@ -595,15 +676,25 @@ def main():
                             items="\n".join(f"- {m}" for m in todo[:args.batch])))
         return
 
+    # Asking what this machine can run is a question about the machine, not
+    # about the data, so it is answered before anything decides to call a model.
+    if args.list_models or args.device_info:
+        endpoint, models, label = discover(args.endpoint)
+        if not endpoint:
+            sys.exit(no_server_message())
+        ram = args.ram_gb or total_ram_gb()
+        for m in models:
+            m["gb"] = estimate_gb(m)
+        if args.device_info:
+            show_device_info(models, ram, len(todo), args)
+        else:
+            show_models(models, ram, endpoint, label, args)
+        return
+
     if todo:
         endpoint, models, label = discover(args.endpoint)
         if not endpoint:
-            sys.exit(
-                "No local LLM server answered.\n"
-                "  Ollama:    ollama serve   (then: ollama pull qwen2.5:7b)\n"
-                "  LM Studio: start the local server from the Developer tab\n"
-                "  llama.cpp: llama-server -m model.gguf --port 8080\n"
-                "Then re-run, or pass --endpoint http://host:port/v1")
+            sys.exit(no_server_message())
 
         ram = args.ram_gb or total_ram_gb()
         if args.ram_gb is None and args.endpoint and not re.search(
@@ -612,36 +703,6 @@ def main():
             print("remote endpoint — not checking this machine's memory")
         for m in models:
             m["gb"] = estimate_gb(m)
-        if args.device_info:
-            dev = detect_device()
-            print(f"\n{describe_device(dev)}")
-            print(f"{label} at {endpoint}\n")
-            budget = ram * 0.60 if ram else None
-            print(f"  {'model':<34}{'size':>8}{'fits':>7}{'est. time':>12}")
-            for m in sorted(models, key=lambda m: m.get("params") or 0):
-                fits = "yes" if (m.get("gb") and budget and m["gb"] <= budget) else "no"
-                est = estimate_minutes(m.get("gb"), dev, len(todo), args.workers)
-                t = f"{est:.0f} min" if est else "—"
-                sz = f"{m['params']:g}B" if m.get("params") else "?"
-                print(f"  {m['name'][:33]:<34}{sz:>8}{fits:>7}{t:>12}")
-            print(f"\n  for {len(todo)} merchants, target {args.target_minutes:g} min")
-            print("  estimates only — the real run measures the model before committing")
-            return
-        if args.list_models:
-            print(f"\n{label} at {endpoint}"
-                  + (f", {ram:.0f} GB RAM detected" if ram else ", RAM unknown"))
-            budget = ram * 0.60 if ram else None
-            for m in sorted(models, key=lambda m: m.get("params") or 0):
-                if m.get("gb") and budget:
-                    verdict = "fits" if m["gb"] <= budget and \
-                        (m.get("params") or 0) <= args.max_params else "too big"
-                else:
-                    verdict = "unknown"
-                print(f"  [{verdict:>8}]  {describe(m)}")
-            if budget:
-                print(f"\nBudget: {budget:.1f} GB (60% of RAM), "
-                      f"parameter ceiling {args.max_params:g}B (--max-params to change)")
-            return
 
         if args.model:
             chosen = next((m for m in models if m["name"] == args.model),
@@ -745,41 +806,41 @@ def main():
     # ---- apply ----
     changed, low_conf = 0, 0
     moves = Counter()
-    for r in rows:
-        m = (r.get("merchant") or "").strip()
-        hit = cache.get(m)
+    extras = []
+    for t in rows:
+        e = {}
+        extras.append(e)
+        hit = cache.get(merchant_of(t))
         if not hit:
             continue
-        old = r.get("category", "")
+        old = t.category or ""
         if hit.get("confidence") == "low":
             low_conf += 1
         if hit.get("name"):
-            r["merchant"] = hit["name"]
-        r["recurring_guess"] = "yes" if hit.get("recurring") else ""
-        r["essential_guess"] = "yes" if hit.get("essential") else ""
-        r["llm_confidence"] = hit.get("confidence", "")
+            t.merchant = hit["name"]
+        e["recurring_guess"] = "yes" if hit.get("recurring") else ""
+        e["essential_guess"] = "yes" if hit.get("essential") else ""
+        e["llm_confidence"] = hit.get("confidence", "")
         newcat = hit.get("category") or old
         if args.keep_rule_category:
-            r["category_llm"] = newcat
+            e["category_llm"] = newcat
         elif newcat and newcat != old:
-            r["category"] = newcat
+            t.category = newcat
             changed += 1
             moves[f"{old or '(blank)'} -> {newcat}"] += 1
-
-    cols = list(rows[0].keys())
-    for extra in ("recurring_guess", "essential_guess", "llm_confidence", "category_llm"):
-        if any(extra in r for r in rows) and extra not in cols:
-            cols.append(extra)
-    with open(args.output, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
-        w.writeheader()
-        for r in rows:
-            w.writerow({c: r.get(c, "") for c in cols})
 
     print(f"\n{changed:,} transactions recategorised, {low_conf:,} flagged low confidence")
     for move, k in moves.most_common(8):
         print(f"  {k:>5}  {move}")
-    print(f"\nWrote {args.output}")
+
+    to_store = source.lower().endswith(".db")
+    if to_store:
+        write_store(source, rows)
+        print(f"\nWrote the labels back into {source}")
+    if args.output or not to_store:
+        out = args.output or "transactions_enriched.csv"
+        write_csv(out, rows, extras)
+        print(f"Wrote {out}")
     print(f"Cache kept in {args.cache} — delete it to re-label from scratch.")
 
 

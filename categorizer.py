@@ -8,10 +8,11 @@ four files with four different category lists, so an LLM label of "Coffee" or
 
     from categorizer import categorize, Categorizer, TAXONOMY
 
-Command line:
-    python categorizer.py apply transactions.csv -o categorized.csv
-    python categorizer.py stats transactions.csv        # coverage by DOLLARS
-    python categorizer.py review transactions.csv       # teach it, biggest money first
+Command line (a source is a .db or a .csv; it defaults to finances.db):
+    python categorizer.py apply --db finances.db        # re-categorise in place
+    python categorizer.py apply finances.db -o categorized.csv
+    python categorizer.py stats finances.db             # coverage by DOLLARS
+    python categorizer.py review finances.db            # teach it, biggest money first
     python categorizer.py eval                          # score against the benchmark
     python categorizer.py explain "SQ *BLUE BOTTLE COFFEE OAKLAND CA"
 
@@ -19,11 +20,19 @@ How it decides, in order. First hit wins, and every answer records which rule
 fired and how sure it is:
 
   1. what you taught it          (learned_rules.json — always wins)
-  2. context rules               COSTCO+GAS is fuel, UBER+EATS is delivery
-  3. brand table                 exact token/phrase match, never substring
-  4. keyword rules               word-boundary regex on the cleaned name
-  5. behaviour                   cadence and amount, when the name says nothing
-  6. Uncategorized               with the reason it couldn't tell
+  2. bank transaction type       read off the raw line: a Zelle, an ATM deposit,
+                                 a book transfer, a card payment. These are the
+                                 rows that must never be counted as spending.
+  3. unambiguous phrases         "CASH ADVANCE FEE" is a fee, not a cash advance
+  4. delivery platforms          you paid the platform, not the restaurant
+  5. context rules               COSTCO+GAS is fuel, UBER+EATS is delivery
+  6. brand table                 exact token/phrase match, never substring
+  7. processor hint              TST* is a restaurant POS, IC* is Instacart
+  8. keyword rules               word-boundary regex on the cleaned name
+  9. glued brand                 "CinemarkDaytonOH" — city welded to the name
+ 10. issuer category label       Capital One and Discover print the MCC in words
+ 11. behaviour                   cadence and amount, when the name says nothing
+ 12. Uncategorized               with the reason it couldn't tell
 
 Standard library only.
 """
@@ -39,6 +48,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 
 LEARNED = "learned_rules.json"
+DEFAULT_SOURCE = "finances.db"
 
 # --------------------------------------------------------------------------
 # One taxonomy. Groups let other scripts ask questions without their own lists.
@@ -75,7 +85,11 @@ WASTE = {c for c, g in TAXONOMY.items() if g == "waste"}
 # Normalisation — the single biggest win. Banks bury the merchant in noise.
 # --------------------------------------------------------------------------
 
-# Preambles the issuer bolts on the front
+# Preambles the issuer bolts on the front. Chase checking is the worst offender:
+# every line starts with the transaction type and the posting date, so the
+# merchant lands three or four tokens in and every rule downstream misses it.
+# "Card Purchase Return" is deliberately excluded — that word is the only thing
+# telling us the row is a refund, and it is read before this ever runs.
 PREAMBLE = re.compile(
     r"^\s*(?:"
     r"purchase\s+authorized\s+on\s+\d{1,2}/\d{1,2}|"
@@ -83,10 +97,46 @@ PREAMBLE = re.compile(
     r"pos\s+(?:debit|purchase|withdrawal)|debit\s+card\s+purchase|"
     r"checkcard\s+\d{2,4}|check\s?card|visa\s+(?:debit|purchase)|"
     r"ach\s+(?:debit|payment)|electronic\s+(?:debit|payment)|"
-    r"card\s+purchase(?:\s+\d{2}/\d{2})?|purchase\s+at|payment\s+to|"
+    r"recurring\s+card\s+purchase(?:\s+\d{1,2}/\d{1,2})?|"
+    r"card\s+purchase(?!\s+return)(?:\s+with\s+pin)?(?:\s+\d{1,2}/\d{1,2})?|"
+    r"pay\s+in\s+4\s+deposit\s*-?\s*(?:pos\s+debit)?|"
+    r"purchase\s+at|payment\s+to|"
     r"recurring\s+(?:debit\s+card|payment)|preauthorized\s+(?:debit|wd)"
     r")\s*",
     re.I)
+
+# Phone wallets prefix the real merchant and mean nothing about what was bought.
+WALLET = re.compile(r"^\s*(?:aplpay|apple\s*pay|googlepay|google\s*pay|gpay|"
+                    r"samsung\s*pay|tap\s*&?\s*pay)\s*", re.I)
+
+# Capital One and Discover print their own merchant-category label at the end of
+# the line. It is the issuer's own classification of the merchant, which beats
+# guessing from a name we could not read — so it is kept as a last-resort hint
+# rather than thrown away with the rest of the trailing noise.
+MCC_LABELS = [
+    ("travel/entertainment", "Travel"),
+    ("government services", None),
+    ("professional services", None),
+    ("department stores", "Shopping"),
+    ("home improvement", "Home"),
+    ("medical services", "Health"),
+    ("warehouse clubs", "Big Box"),
+    ("grocery stores", "Groceries"),
+    ("gas stations", "Gas/Auto"),
+    ("fast food", "Dining"),
+    ("supermarkets", "Groceries"),
+    ("restaurants", "Dining"),
+    ("merchandise", "Shopping"),
+    ("gasoline", "Gas/Auto"),
+    ("automotive", "Gas/Auto"),
+    ("education", "Education"),
+    ("utilities", "Utilities"),
+    ("insurance", "Insurance"),
+    ("services", None),
+]
+_MCC_RX = re.compile(r"\s+(" + "|".join(re.escape(p) for p, _ in MCC_LABELS) + r")\s*$",
+                     re.I)
+_MCC_INDEX = {p: c for p, c in MCC_LABELS}
 
 # "SQ *MERCHANT" — the processor, then the merchant we actually want
 PROCESSORS = [
@@ -95,19 +145,24 @@ PROCESSORS = [
     ("instacart", r"^ic\s*\*+\s*"), ("wepay", r"^wpy\s*\*+\s*"),
     ("eventbrite", r"^eb\s*\*+\s*"), ("stripe", r"^(?:stripe|str)\s*\*+\s*"),
     ("clover", r"^clv\s*\*+\s*"), ("2checkout", r"^2co\s*\*+\s*"),
+    ("ticketmaster", r"^tm\s*\*+\s*"),
 ]
 PROCESSORS = [(n, re.compile(p, re.I)) for n, p in PROCESSORS]
 
 TRAILING_JUNK = [
     r"\bS\d{12,}\b",                       # Wells Fargo auth strings
-    r"\bcard\s*\d{4}\b",
+    r"\bcard\s*(?:ending\s*in\s*)?\d{4}\b",
     r"\bref\s*#?\s*\d+\b",
-    r"\bppd\s*id\s*:?\s*\d*",
+    r"\b(?:ppd|ccd|web|arc|tel)\s*id\s*:?\s*\d*",
+    r"\btransaction\s*#\s*:?\s*\d*",
     r"\bid\s*:\s*\S+",
+    r"\baba/?contr\s*bnk-?\d*",            # Chase real-time-payment routing noise
+    r"\bfrom\s*:\s*$",
     r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b",      # phone
     r"\b\d{10,}\b",                        # long reference numbers
     r"\bhttps?://\S+", r"\bwww\.",
     r"#\s*\d+\b", r"\bstore\s*\d+\b", r"\b\d{2}/\d{2}\b",
+    r"\.{2,}\d+",                          # Chase account stubs: ...4321
     r"\b[A-Z0-9]{6,}\d[A-Z0-9]*\b",        # auth codes: letters AND digits
 ]
 TRAILING_JUNK = [re.compile(p, re.I) for p in TRAILING_JUNK]
@@ -132,13 +187,25 @@ NOISE_WORDS = {
 
 
 def normalize(descriptor):
-    """Cleaned merchant name plus whatever hints the noise gave up."""
+    """Cleaned merchant name plus whatever hints the noise gave up.
+
+    Hints are facts recovered from the parts we then delete: which payment
+    processor fronted the charge, and what the issuer itself called the
+    merchant. Both are worth more than the reference numbers they sit next to.
+    """
     s = str(descriptor or "").strip()
     hints = set()
 
+    m = _MCC_RX.search(s)
+    if m:
+        s = s[:m.start()]
+        hints.add("mcc:" + m.group(1).lower())
+
     s = PREAMBLE.sub("", s)
+    s = WALLET.sub("", s)
     # Strip the TLD but keep the name: AMAZON.COM -> AMAZON, APPLE.COM/BILL -> APPLE BILL
-    s = re.sub(r"\.(?:com|net|org|io|co|gov|edu|us|biz)\b", " ", s, flags=re.I)
+    s = re.sub(r"\.(?:com|net|org|io|co|ai|app|dev|tv|xyz|cloud|tech|gov|edu|us|biz)\b",
+               " ", s, flags=re.I)
     for name, rx in PROCESSORS:
         if rx.search(s):
             s = rx.sub("", s)
@@ -155,15 +222,24 @@ def normalize(descriptor):
 
     toks = [t.strip(".-") for t in s.split()]
     toks = [t for t in toks if t]
-
-    # Drop a trailing state, then city words that led up to it
-    while toks and toks[-1] in US_STATES:
-        toks.pop()
-        while toks and toks[-1] in CITY_WORDS:
-            toks.pop()
-    while toks and toks[-1] in NOISE_WORDS:
-        toks.pop()
+    # Reference and store numbers first: otherwise a trailing "CARD 1234" stops
+    # the tail-stripping below dead, and every Chase line keeps the word CARD.
     toks = [t for t in toks if not (t.isdigit() and len(t) >= 4)]
+
+    # Peel the tail: a state, the city words that led up to it, issuer noise,
+    # and any leftover number. Repeated because Chase prints city, state and
+    # card number in that order and one pass only removes the last of them.
+    peeled = True
+    while peeled and toks:
+        peeled = False
+        if toks[-1] in US_STATES:
+            toks.pop()
+            peeled = True
+            while toks and toks[-1] in CITY_WORDS:
+                toks.pop()
+        elif toks[-1] in NOISE_WORDS or toks[-1].isdigit():
+            toks.pop()
+            peeled = True
 
     return " ".join(toks[:6]), hints
 
@@ -180,6 +256,9 @@ BRANDS = {
         "CTOWN", "H MART", "HMART", "WESTSIDE MARKET", "GRISTEDES", "MORTON WILLIAMS",
         "INSTACART", "FRESHDIRECT", "HARRIS TEETER", "GIANT FOOD", "MEIJER",
         "WINCO", "VONS", "PATHMARK", "ACME MARKETS", "SPROUTS FARMERS",
+        # New England, which is where this dataset actually shops
+        "BIG Y", "BIG Y WORLD CLASS MARKET", "MARKET BASKET", "STAR MARKET",
+        "PRICE CHOPPER", "HANNAFORD", "ROCHE BROS", "RUSSO", "DAIRY MART",
     ],
     "Coffee": [
         "STARBUCKS", "DUNKIN", "BLUE BOTTLE", "PHILZ", "PEETS", "PEET S",
@@ -196,6 +275,9 @@ BRANDS = {
         "FIVE GUYS", "SUBWAY", "TACO BELL", "HALAL GUYS", "JOE S PIZZA",
         "JOES PIZZA", "DIG INN", "CAVA", "PRET A MANGER", "NOODLES",
         "OLIVE GARDEN", "CHEESECAKE FACTORY", "IHOP", "DENNYS", "APPLEBEES",
+        "DOMINOS", "DOMINO S", "PAPA JOHNS", "PANDA EXPRESS", "WINGSTOP",
+        "RAISING CANES", "ANTONIOS", "BERTUCCIS", "BIRYANI", "HALAL",
+        "MOES SOUTHWEST", "QDOBA", "JERSEY MIKES", "SBARRO",
     ],
     "Alcohol/Bars": [
         "TOTAL WINE", "BEVMO", "DEAD RABBIT", "BROOKLYN BREWERY", "WINE",
@@ -206,19 +288,28 @@ BRANDS = {
         "METRO", "BART", "CALTRAIN", "SEPTA", "E-ZPASS", "EZPASS", "SPOTHERO",
         "PARKMOBILE", "PARKWHIZ", "PORT AUTHORITY", "REVEL", "CITI BIKE",
         "CITIBIKE", "LIME", "BIRD RIDES", "CURB", "VIA",
+        "MBTA", "PVTA", "MASSDOT", "EZDRIVEMA", "ERACTOLL",
+        "PEAKPASS", "SUNPASS", "FASTLANE", "PATCO",
     ],
     "Gas/Auto": [
         "SHELL", "SHELL OIL", "EXXON", "EXXONMOBIL", "MOBIL", "CHEVRON", "SUNOCO",
         "WAWA", "SPEEDWAY", "CITGO", "VALERO", "TEXACO", "BP", "GULF", "QUIKTRIP",
         "SHEETZ", "RACETRAC", "AUTOZONE", "JIFFY LUBE", "MIDAS", "PEP BOYS",
         "FIRESTONE", "MAVIS", "PETROLEUM", "DMV", "MOTOR VEHICLE",
+        "CUMBERLAND FARMS", "CIRCLE K", "IRVING OIL", "PRIDE STATION",
+        "ELECTRIFY AMERICA", "ELECTRIFY", "CHARGEPOINT", "EVGO", "SUPERCHARGER",
+        "RMV", "REGISTRY OF MOTOR VEHICLES",
     ],
     "Travel": [
         "DELTA AIR", "DELTA AIRLINES", "UNITED AIRLINES", "AMERICAN AIRLINES",
         "JETBLUE", "SOUTHWEST AIR", "SPIRIT AIRLINES", "ALASKA AIRLINES",
         "FRONTIER AIR", "EXPEDIA", "PRICELINE", "KAYAK", "HOPPER", "TSA",
         "GLOBAL ENTRY", "CLEAR", "HERTZ", "AVIS", "ENTERPRISE RENT", "BUDGET RENT",
-        "TURO", "SIXT", "EUROSTAR", "TRAINLINE",
+        # Hourly rental rather than a trip, but it is still renting a car, and
+        # both issuers here label it Travel/Entertainment themselves.
+        "ZIPCAR",
+        "TURO", "SIXT", "EUROSTAR", "TRAINLINE", "CHASE TRAVEL", "TRIPCHRG",
+        "WANDERU", "OMIO", "FLIXBUS", "GREYHOUND", "PEAK RESORTS",
     ],
     "Lodging": [
         "MARRIOTT", "HILTON", "HYATT", "AIRBNB", "VRBO", "BOOKING.COM", "BOOKING COM",
@@ -233,6 +324,9 @@ BRANDS = {
         "AMAZON", "AMZN", "EBAY", "ETSY", "TEMU", "SHEIN", "WISH", "ALIEXPRESS",
         "MACYS", "NORDSTROM", "TJ MAXX", "TJMAXX", "MARSHALLS", "ROSS STORES",
         "SEPHORA", "ULTA", "STAPLES", "OFFICE DEPOT", "CONTAINER STORE",
+        "JCPENNEY", "JC PENNEY", "KOHLS", "BURLINGTON", "DOLLAR TREE",
+        "DOLLAR GENERAL", "FAMILY DOLLAR", "FIVE BELOW", "HUDSON NEWS",
+        "HUDSONNEWS", "CVS PHOTO", "MICHAELS", "BARNES & NOBLE", "BARNES NOBLE",
     ],
     "Electronics": [
         "BEST BUY", "BESTBUY", "APPLE STORE", "MICRO CENTER", "MICROCENTER",
@@ -268,6 +362,8 @@ BRANDS = {
         "GOOGLE CLOUD", "AZURE", "DIGITALOCEAN", "VERCEL", "NETLIFY", "HEROKU",
         "MICROSOFT", "MSBILL", "ATLASSIAN", "ASANA", "MONDAY.COM",
         "LINODE", "CLOUDFLARE", "DOCKER", "1PASSWORD", "LASTPASS", "TWILIO",
+        "NAMECHEAP", "NAME-CHEAP", "GODADDY", "PORKBUN", "HOSTINGER",
+        "SUPABASE", "PLANETSCALE", "MONGODB", "POSTMAN", "APPLE DEVELOPER",
     ],
     "Gaming": [
         "STEAM", "STEAMGAMES", "XBOX", "PLAYSTATION", "NINTENDO", "EPIC GAMES",
@@ -276,7 +372,7 @@ BRANDS = {
     "Entertainment": [
         "TICKETMASTER", "STUBHUB", "LIVE NATION", "EVENTBRITE", "AMC", "REGAL",
         "CINEMARK", "ALAMO DRAFTHOUSE", "DICE", "AXS", "MUSEUM", "AQUARIUM",
-        "BROOKLYN STEEL", "MADISON SQUARE GARDEN",
+        "BROOKLYN STEEL", "MADISON SQUARE GARDEN", "SIX FLAGS", "DAVE & BUSTERS",
     ],
     "Utilities": [
         "CON EDISON", "CONED", "PSEG", "PSE&G", "NATIONAL GRID", "DUKE ENERGY",
@@ -302,7 +398,7 @@ BRANDS = {
         "EQUINOX", "PLANET FITNESS", "CRUNCH FITNESS", "BLINK FITNESS",
         "SOULCYCLE", "CLASSPASS", "PELOTON", "CROSSFIT", "ORANGETHEORY",
         "LIFE TIME", "24 HOUR FITNESS", "GOLD S GYM", "YMCA", "PURE BARRE",
-        "YOGA", "PILATES", "GYM",
+        "YOGA", "PILATES", "GYM", "ICLUB",
     ],
     "Personal Care": [
         "SUPERCUTS", "GREAT CLIPS", "DRYBAR", "BARBER", "SALON", "SPA",
@@ -337,10 +433,14 @@ BRANDS = {
         "WESTERN UNION", "MONEYGRAM", "ATM WITHDRAWAL", "CASH ADVANCE",
         "COINBASE", "ROBINHOOD", "FIDELITY", "VANGUARD", "SCHWAB", "BETTERMENT",
         "WEALTHFRONT", "ACORNS", "E TRADE", "ETRADE",
+        # How Chase and Amex name their own money movements: not purchases
+        "FID BKG SVC", "MONEYLINE", "AMEX SEND", "BOOK TRANSFER",
+        "NATIONAL FINANCIAL SERVICES",
     ],
     "Rent/Housing": [
         "RENT", "LANDLORD", "PROPERTY MGMT", "PROPERTY MANAGEMENT", "HOA",
         "MORTGAGE", "APARTMENTS", "REALTY", "LEASING",
+        "RPS", "RESIDENT PORTAL", "APAR",
     ],
 }
 
@@ -351,6 +451,16 @@ for _cat, _names in BRANDS.items():
         _BRAND_INDEX.setdefault(_n.upper(), _cat)
 _BRAND_PHRASES = sorted(_BRAND_INDEX, key=lambda p: -len(p.split()))
 _MAX_NGRAM = max(len(p.split()) for p in _BRAND_PHRASES)
+
+# Some issuers weld the city and state straight onto the merchant name, with no
+# space: "CinemarkDaytonOH", "DOLLAR TREEDAYTONOH", "MCDONALDSSAN FRANCISCOCA".
+# Nothing token-based can see those, so a brand is also allowed to match as a
+# *prefix* of a longer run of letters. Seven characters minimum: shorter names
+# collide with ordinary words, and an exact match would have fired already.
+_BRAND_GLUED = sorted(
+    ((p.replace(" ", "").replace("-", ""), c) for p, c in _BRAND_INDEX.items()
+     if len(p.replace(" ", "").replace("-", "")) >= 7),
+    key=lambda pc: -len(pc[0]))
 
 
 # --------------------------------------------------------------------------
@@ -383,8 +493,55 @@ CONTEXT = [
     (("GITHUB", "COPILOT"), (), "Software/Tools"),
 ]
 
-# Hints from a payment processor prefix
-PROCESSOR_CATEGORY = {"instacart": "Groceries", "eventbrite": "Entertainment"}
+# Hints from a payment processor prefix. Only processors that sell one kind of
+# thing qualify: Toast is a restaurant point-of-sale and nothing else, whereas
+# Square is used by barbers and bakeries alike and so says nothing.
+PROCESSOR_CATEGORY = {"instacart": "Groceries", "eventbrite": "Entertainment",
+                      "toast": "Dining", "ticketmaster": "Entertainment"}
+
+# Bank statement lines name their own transaction type, and that name is the
+# most reliable thing on the row — more reliable than the merchant, which for
+# these rows is a person or an account number. Read off the raw descriptor
+# before any cleaning, because cleaning is exactly what destroys them.
+#
+# The line drawn here: money moving between accounts you already own is
+# Transfers/Cash; money arriving from someone else is Income. Neither is
+# spending, which is the point — these rows were being counted as purchases.
+BANK_PHRASES = [
+    ("CARD PURCHASE RETURN", "Credits/Refunds", "purchase returned"),
+    ("ZELLE PAYMENT FROM", "Income", "Zelle received"),
+    ("ZELLE PAYMENT TO", "Transfers/Cash", "Zelle sent"),
+    ("REAL TIME PAYMENT CREDIT", "Income", "real-time payment received"),
+    ("REMOTE ONLINE DEPOSIT", "Income", "cheque deposited"),
+    ("EDI PAYMNT", "Income", "EDI payment received"),
+    ("BOOK TRANSFER CREDIT", "Transfers/Cash", "internal book transfer in"),
+    ("BOOK TRANSFER DEBIT", "Transfers/Cash", "internal book transfer out"),
+    ("ONLINE TRANSFER FROM", "Transfers/Cash", "moved between your accounts"),
+    ("ONLINE TRANSFER TO", "Transfers/Cash", "moved between your accounts"),
+    ("ATM CASH DEPOSIT", "Transfers/Cash", "cash paid in at an ATM"),
+    ("ATM WITHDRAWAL", "Transfers/Cash", "cash taken out"),
+    ("AMEX SEND", "Transfers/Cash", "Amex Send transfer"),
+    ("FID BKG SVC", "Transfers/Cash", "Fidelity brokerage transfer"),
+    ("PAYMENT TO CHASE", "Payment", "card payment"),
+    ("AUTOPAY TO CHASE", "Payment", "card payment"),
+    ("CHASE CREDIT CRD", "Payment", "card payment"),
+    ("AMERICAN EXPRESS ACH PMT", "Payment", "card payment"),
+    ("DISCOVER E-PAYMENT", "Payment", "card payment"),
+    ("AUTOMATIC PAYMENT", "Payment", "card payment"),
+    # Issuers name themselves when you pay the card from a bank account. These
+    # have to be caught here, before keywords: "Capital One Mobile Pmt" was
+    # reading as Phone/Internet on the word "Mobile", turning a $1,200 card
+    # payment into a phone bill and double-counting it against the card
+    # statement that already lists the purchases.
+    ("CAPITAL ONE MOBILE PMT", "Payment", "card payment"),
+    ("CAPITAL ONE ONLINE PMT", "Payment", "card payment"),
+    ("CAPITAL ONE CRCARDPMT", "Payment", "card payment"),
+    ("CHASE CARD PMT", "Payment", "card payment"),
+    ("BK OF AMER CRD", "Payment", "card payment"),
+    ("CITI CARD ONLINE", "Payment", "card payment"),
+    ("SYNCHRONY BANK CC PMT", "Payment", "card payment"),
+    ("WF CREDIT CARD AUTO PAY", "Payment", "card payment"),
+]
 
 # Unambiguous wherever they appear, checked before any brand name
 PRIORITY_PHRASES = [
@@ -414,6 +571,7 @@ PRIORITY_PHRASES = [
     ("STUDENT LOAN", "Debt Payment", "student loan"),
     ("AUTO LOAN", "Debt Payment", "auto loan"),
     ("LOAN PAYMENT", "Debt Payment", "loan payment"),
+    ("TAXRFD", "Income", "tax refund"),
 ]
 
 # Platforms that resell someone else's product: you paid the platform
@@ -452,7 +610,7 @@ KEYWORDS = [
                r"bakery|deli|diner|steakhouse|grill|bistro|trattoria|ramen|"
                r"noodle|bbq|burger|sandwich|eatery|osteria|cantina)\b"),
     ("Alcohol/Bars", r"\b(?:bar|pub|tavern|lounge|cocktail|brewery|brewing|"
-                     r"winery|liquor|spirits|beer|wine)\b"),
+                     r"winery|liquors?|spirits|beer|wine)\b"),
     ("Groceries", r"\b(?:grocer|grocery|supermarket|market|foods|produce|farmers)\b"),
     ("Pharmacy", r"\b(?:pharmacy|drug\s*store|drugstore|apothecary)\b"),
     ("Health", r"\b(?:medical|clinic|hospital|doctor|dental|dentist|physician|"
@@ -468,8 +626,13 @@ KEYWORDS = [
     ("Utilities", r"\b(?:electric|energy|utility|utilities|water|gas\s*company|"
                   r"sewer|sanitation)\b"),
     ("Phone/Internet", r"\b(?:wireless|mobile|broadband|internet|telecom|fiber)\b"),
-    ("Rent/Housing", r"\b(?:rent|lease|landlord|property|apartment|realty|"
-                     r"mortgage|hoa)\b"),
+    # "rent" is the one housing word that routinely means something else:
+    # rent-a-car, car rental, rental car, equipment rental. Those are Travel or
+    # Gas/Auto, and a car hire filed as housing quietly inflates the essential
+    # spending that the emergency-fund target is sized from.
+    ("Rent/Housing", r"\b(?:rent(?!(?:[\s-]*a[\s-]*car|al[\s-]*car))|lease|"
+                     r"landlord|property|apartment|realty|mortgage|hoa)\b"
+                     r"(?![\s-]*a[\s-]*car)"),
     ("Insurance", r"\b(?:insurance|premium|underwrit|assurance)\b"),
     ("Education", r"\b(?:tuition|university|college|school|academy|bursar|"
                   r"course|bookstore)\b"),
@@ -542,12 +705,22 @@ class Categorizer:
     # -- the decision -----------------------------------------------------
     def categorize(self, descriptor):
         clean, hints = normalize(descriptor)
+        raw = str(descriptor or "").upper()
+
+        if clean and clean in self.learned:
+            return Result(self.learned[clean], "learned", 1.0, clean, "you told me")
+
+        # The bank already told us what kind of row this is, and that beats the
+        # merchant name: "Zelle Payment From Jordan Rivera" names a person,
+        # not a shop, and every rule below would try to read it as one. Checked
+        # against the raw line, because cleaning is what destroys these.
+        for phrase, cat, why in BANK_PHRASES:
+            if phrase in raw:
+                return Result(cat, "bank", 0.95, clean or phrase.title(), why)
+
         if not clean:
             return Result("Uncategorized", "empty", 0.0, clean,
                           "nothing left after cleaning")
-
-        if clean in self.learned:
-            return Result(self.learned[clean], "learned", 1.0, clean, "you told me")
 
         toks = clean.split()
         tokset = set(toks)
@@ -597,6 +770,25 @@ class Categorizer:
                 if bnpl_hit:
                     note += f" (financed via {bnpl_hit[1].title()})"
                 return Result(cat, "keyword", 0.7, clean, note)
+
+        # City welded onto the name with no space. Only exact prefixes of a long
+        # brand qualify, so this cannot invent a match out of a common word.
+        flat = clean.replace(" ", "").replace("-", "")
+        for brand, cat in _BRAND_GLUED:
+            if flat.startswith(brand) and len(flat) > len(brand):
+                return Result(cat, "glued", 0.75, clean,
+                              f"{brand} with the location run into it")
+            for t in toks:
+                if len(t) > len(brand) and t.startswith(brand):
+                    return Result(cat, "glued", 0.75, clean,
+                                  f"{brand} with the location run into it")
+
+        # Last: whatever the issuer itself called this merchant. Weaker than a
+        # name we recognise, stronger than giving up.
+        for h in hints:
+            if h.startswith("mcc:") and _MCC_INDEX.get(h[4:]):
+                return Result(_MCC_INDEX[h[4:]], "issuer", 0.6, clean,
+                              f"the statement labels it {h[4:]}")
 
         if bnpl_hit:
             return Result(bnpl_hit[0], "brand", 0.88, clean, bnpl_hit[1])
@@ -660,49 +852,59 @@ def category_of(descriptor, learned_path=LEARNED):
 
 
 # --------------------------------------------------------------------------
-# CSV helpers
+# Reading and writing the store
+#
+# Input is a .db or a .csv, read through engine.load_transactions so this tool
+# and every sibling see the same rows. Output goes back into the store, because
+# improving categories used to mean a CSV round-trip that nothing else read.
 # --------------------------------------------------------------------------
 
-def read_rows(path):
-    with open(path, newline="") as fh:
-        rows = list(csv.DictReader(fh))
-    if not rows:
-        sys.exit(f"{path} is empty")
-    return rows
+def load_source(source):
+    """Transactions from a .db or a .csv. Imported lazily: engine imports the
+    taxonomy from here, and a module-level import would close the circle."""
+    from engine import load_transactions
+    txns = load_transactions(source)
+    if not txns:
+        sys.exit(f"{source} has no transactions")
+    return txns
 
 
-def descriptor_of(r):
-    return (r.get("description") or r.get("merchant") or "").strip() or \
-           (r.get("merchant") or "").strip()
+def write_store(source, txns):
+    from database import FinanceDB
+    with FinanceDB(source) as db:
+        db.upsert_transactions(txns)
 
 
-def amount_of(r):
-    try:
-        return float(r.get("amount", 0) or 0)
-    except ValueError:
-        return 0.0
+def write_csv(path, txns, results, extras=True):
+    from models import Transaction
+    cols = Transaction.columns()
+    if extras:
+        cols = cols + ["category_source", "category_confidence", "merchant_clean"]
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        for t, res in zip(txns, results):
+            row = t.to_row()
+            if extras:
+                row.update({"category_source": res.source,
+                            "category_confidence": f"{res.confidence:.2f}",
+                            "merchant_clean": res.clean})
+            w.writerow(row)
 
 
-def date_of(r):
-    try:
-        return datetime.strptime(r["date"][:10], "%Y-%m-%d").date()
-    except (ValueError, KeyError):
-        return None
+def descriptor_of(t):
+    return (t.description or t.merchant or "").strip()
 
 
-def categorize_rows(rows, cz, use_behaviour=True):
-    """Categorise every row, then take a second pass at the leftovers."""
-    results = []
-    for r in rows:
-        results.append(cz.categorize(descriptor_of(r)))
+def categorize_rows(txns, cz, use_behaviour=True):
+    """Categorise every transaction, then take a second pass at the leftovers."""
+    results = [cz.categorize(descriptor_of(t)) for t in txns]
 
     if use_behaviour:
         groups = defaultdict(list)
-        for r, res in zip(rows, results):
-            if res.category == "Uncategorized":
-                d = date_of(r)
-                if d:
-                    groups[res.clean].append((d, abs(amount_of(r))))
+        for t, res in zip(txns, results):
+            if res.category == "Uncategorized" and t.d:
+                groups[res.clean].append((t.d, abs(t.amount)))
         inferred = cz.infer_from_behaviour(groups)
         for res in results:
             if res.category == "Uncategorized" and res.clean in inferred:
@@ -718,53 +920,59 @@ def categorize_rows(rows, cz, use_behaviour=True):
 
 def cmd_apply(args):
     cz = Categorizer(args.learned)
-    rows = read_rows(args.csv)
-    results = categorize_rows(rows, cz, not args.no_behaviour)
+    source = args.db or args.source
+    txns = load_source(source)
+    results = categorize_rows(txns, cz, not args.no_behaviour)
 
-    kept = 0
-    for r, res in zip(rows, results):
-        old = r.get("category", "")
-        if args.keep_existing and old and old != "Uncategorized":
-            r["category_engine"] = res.category
+    changed = Counter()
+    for t, res in zip(txns, results):
+        old = t.category or "Uncategorized"
+        if args.keep_existing and old != "Uncategorized":
             continue
-        if res.category != "Uncategorized" or not old:
-            if r.get("category") != res.category:
-                kept += 1
-            r["category"] = res.category
-        r["category_source"] = res.source
-        r["category_confidence"] = f"{res.confidence:.2f}"
-        r["merchant_clean"] = res.clean
+        if res.category == "Uncategorized" and old != "Uncategorized":
+            continue                       # never downgrade a known category
+        if old != res.category:
+            changed[f"{old} -> {res.category}"] += 1
+            t.category = res.category
+        if args.clean_merchants and res.clean:
+            t.merchant = res.clean
 
-    cols = list(rows[0].keys())
-    for extra in ("category_source", "category_confidence", "merchant_clean",
-                  "category_engine"):
-        if any(extra in r for r in rows) and extra not in cols:
-            cols.append(extra)
-    with open(args.output, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
-        w.writeheader()
-        for r in rows:
-            w.writerow({c: r.get(c, "") for c in cols})
+    n = sum(changed.values())
+    print(f"{len(txns):,} transactions, {n:,} categories changed")
+    for move, k in changed.most_common(10):
+        print(f"  {k:>5}  {move}")
+    _coverage(txns, results)
 
-    print(f"{len(rows):,} rows, {kept:,} categories changed")
-    _coverage(rows, results)
-    print(f"\nWrote {args.output}")
+    if args.dry_run:
+        print("\n--dry-run: nothing written")
+        return
+    to_store = source.lower().endswith(".db")
+    if to_store:
+        write_store(source, txns)
+        print(f"\nWrote {n:,} updated categories back into {source}")
+    if args.output or not to_store:
+        out = args.output or "categorized.csv"
+        write_csv(out, txns, results)
+        print(f"Wrote {out}")
 
 
-def _coverage(rows, results):
+def _coverage(txns, results):
     """Coverage that matters is dollars, not row counts."""
     total = unknown = 0.0
     by_source = defaultdict(float)
     n_by_source = Counter()
-    for r, res in zip(rows, results):
-        a = abs(amount_of(r))
-        if amount_of(r) <= 0 or res.category in NON_SPEND:
+    non_spend = 0.0
+    for t, res in zip(txns, results):
+        if t.amount <= 0:
             continue
-        total += a
-        by_source[res.source] += a
+        if res.category in NON_SPEND:
+            non_spend += t.amount
+            continue
+        total += t.amount
+        by_source[res.source] += t.amount
         n_by_source[res.source] += 1
         if res.category == "Uncategorized":
-            unknown += a
+            unknown += t.amount
     if not total:
         print("no spending rows to measure")
         return
@@ -772,48 +980,54 @@ def _coverage(rows, results):
     for s, v in sorted(by_source.items(), key=lambda kv: -kv[1]):
         print(f"  {s:<22}{n_by_source[s]:>7}{v:>14,.0f}{v/total*100:>7.1f}%")
     cov = (total - unknown) / total * 100
-    print(f"  categorised: {cov:.1f}% of spending  "
-          f"({'$%,.0f' % unknown if False else f'${unknown:,.0f}'} still unknown)")
+    print(f"  categorised: {cov:.1f}% of spending  (${unknown:,.0f} still unknown)")
+    if non_spend:
+        gross = total + non_spend
+        print(f"  held out as non-spend: ${non_spend:,.0f} of ${gross:,.0f} gross "
+              f"outflow ({non_spend / gross * 100:.1f}%) — transfers, card "
+              f"payments, refunds")
 
 
 def cmd_stats(args):
     cz = Categorizer(args.learned)
-    rows = read_rows(args.csv)
-    results = categorize_rows(rows, cz, True)
-    _coverage(rows, results)
+    source = args.db or args.source
+    txns = load_source(source)
+    results = categorize_rows(txns, cz, True)
+    _coverage(txns, results)
 
     unknown = defaultdict(lambda: [0.0, 0])
-    for r, res in zip(rows, results):
-        if res.category == "Uncategorized" and amount_of(r) > 0:
-            unknown[res.clean][0] += amount_of(r)
+    for t, res in zip(txns, results):
+        if res.category == "Uncategorized" and t.amount > 0:
+            unknown[res.clean][0] += t.amount
             unknown[res.clean][1] += 1
     if unknown:
         print(f"\n  Biggest unknowns — teaching it these 10 covers the most money:")
         for name, (amt, n) in sorted(unknown.items(), key=lambda kv: -kv[1][0])[:10]:
             print(f"    ${amt:>10,.0f}  {n:>3}x  {name[:44]}")
-        print(f"\n  Fix them interactively:  python categorizer.py review {args.csv}")
+        print(f"\n  Fix them interactively:  python categorizer.py review {source}")
 
 
 def cmd_review(args):
     """Ask about unknowns in order of how much money they represent."""
     cz = Categorizer(args.learned)
-    rows = read_rows(args.csv)
-    results = categorize_rows(rows, cz, True)
+    source = args.db or args.source
+    txns = load_source(source)
+    results = categorize_rows(txns, cz, True)
 
     unknown = defaultdict(lambda: [0.0, 0, ""])
     unreadable = [0.0, 0]
-    for r, res in zip(rows, results):
-        if amount_of(r) <= 0:
+    for t, res in zip(txns, results):
+        if t.amount <= 0:
             continue
         low = res.confidence < args.min_confidence
         if not res.clean:
-            unreadable[0] += amount_of(r)
+            unreadable[0] += t.amount
             unreadable[1] += 1
             continue
         if res.category == "Uncategorized" or (args.include_low and low):
-            unknown[res.clean][0] += amount_of(r)
+            unknown[res.clean][0] += t.amount
             unknown[res.clean][1] += 1
-            unknown[res.clean][2] = descriptor_of(r)
+            unknown[res.clean][2] = descriptor_of(t)
 
     if unreadable[1]:
         print(f"Note: {unreadable[1]} charge(s) worth ${unreadable[0]:,.0f} have no "
@@ -875,8 +1089,7 @@ def cmd_review(args):
     cz.save()
     print(f"\nLearned {taught} merchant(s) -> {args.learned}")
     if taught:
-        print(f"Re-run to apply:  python categorizer.py apply {args.csv} "
-              f"-o categorized.csv")
+        print(f"Re-run to apply:  python categorizer.py apply {source}")
 
 
 def cmd_eval(args):
@@ -923,8 +1136,12 @@ def cmd_explain(args):
     res = cz.categorize(args.descriptor)
     print(f"  as shown:   {args.descriptor}")
     print(f"  cleaned to: {clean}")
-    if hints:
-        print(f"  processor:  {', '.join(sorted(hints))}")
+    proc = sorted(h for h in hints if not h.startswith("mcc:"))
+    mcc = sorted(h[4:] for h in hints if h.startswith("mcc:"))
+    if proc:
+        print(f"  processor:  {', '.join(proc)}")
+    if mcc:
+        print(f"  issuer says: {', '.join(mcc)}")
     print(f"  category:   {res.category}")
     print(f"  decided by: {res.source} ({res.note})")
     print(f"  confidence: {res.confidence:.2f}")
@@ -949,21 +1166,33 @@ def main():
                     help="where your corrections are stored")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    a = sub.add_parser("apply", help="categorise a CSV")
-    a.add_argument("csv")
-    a.add_argument("-o", "--output", default="categorized.csv")
+    def add_source(p):
+        p.add_argument("source", nargs="?", default=DEFAULT_SOURCE,
+                       help=f"a .db or a .csv (default {DEFAULT_SOURCE})")
+        p.add_argument("--db", help="the store to read, same as the positional "
+                                    "argument; here for consistency with the "
+                                    "other tools")
+
+    a = sub.add_parser("apply", help="categorise the store, or a CSV")
+    add_source(a)
+    a.add_argument("-o", "--output",
+                   help="also write a CSV (the default when the source is a CSV)")
     a.add_argument("--keep-existing", action="store_true",
-                   help="don't overwrite categories already in the file")
+                   help="don't overwrite categories that are already set")
+    a.add_argument("--clean-merchants", action="store_true",
+                   help="also replace merchant with the cleaned name")
     a.add_argument("--no-behaviour", action="store_true",
                    help="skip cadence-based inference")
+    a.add_argument("--dry-run", action="store_true",
+                   help="show what would change and write nothing")
     a.set_defaults(func=cmd_apply)
 
     s = sub.add_parser("stats", help="coverage by dollars, and the biggest unknowns")
-    s.add_argument("csv")
+    add_source(s)
     s.set_defaults(func=cmd_stats)
 
     r = sub.add_parser("review", help="teach it, biggest money first")
-    r.add_argument("csv")
+    add_source(r)
     r.add_argument("--limit", type=int, default=25)
     r.add_argument("--include-low", action="store_true",
                    help="also review low-confidence guesses")

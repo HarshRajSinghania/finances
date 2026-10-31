@@ -5,7 +5,7 @@ planner.py — plan what you're saving for, using your own numbers.
 It reads your transactions to work out what you actually have spare each month,
 then tells you whether your goals fit in it and when each one lands.
 
-    python planner.py init --csv cleanedData/transactions.csv
+    python planner.py init --source finances.db --income 5000
     python planner.py add "Emergency fund" --target 12000 --priority 1
     python planner.py add "New car" --target 20000 --by 2027-06 --saved 1500
     python planner.py add "Japan trip" --target 4500 --by 2026-11 --priority 3
@@ -14,6 +14,12 @@ then tells you whether your goals fit in it and when each one lands.
     python planner.py simulate --monthly 900
     python planner.py simulate --cut Dining=30 --cut Delivery=50
     python planner.py report -o plan.html
+
+--source takes either the shared store (finances.db) or a legacy transactions
+CSV; the old --csv spelling still works. The numbers behind a plan — monthly
+spend, income, essential spend, surplus, what repeats every month — come from
+engine.Engine, so the planner, the dashboard and the auditor cannot quote three
+different figures for the same file.
 
 Emergency fund sizing is based on your essential spending, not a rule of thumb:
 rent, utilities, groceries, transport, insurance and health, times however many
@@ -34,17 +40,13 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from categorizer import NON_SPEND, ESSENTIAL, DISCRETIONARY
-except ImportError:
-    NON_SPEND = {"Payment", "Credits/Refunds", "Transfers/Cash", "Income"}
-    ESSENTIAL = {"Groceries", "Transport", "Gas/Auto", "Utilities", "Phone/Internet",
-                 "Rent/Housing", "Insurance", "Health", "Pharmacy", "Education",
-                 "Childcare", "Taxes"}
-    DISCRETIONARY = {"Dining", "Coffee", "Delivery", "Alcohol/Bars", "Shopping",
-                     "Big Box", "Electronics", "Clothing", "Home", "Entertainment",
-                     "Personal Care", "Travel", "Lodging", "Subscriptions",
-                     "Software/Tools", "Gaming", "Gifts", "Pets", "Fitness"}
+
+# One store, one set of semantics. The Engine owns what counts as spending,
+# which months are complete, what repeats and how much of it reconciles; the
+# planner only decides what to do with the money that is left over.
+from database import DEFAULT_DB  # noqa: E402
+from engine import Engine  # noqa: E402
+from utils import fmt_money as money, future_value  # noqa: E402
 
 PLAN = "plan.json"
 
@@ -52,10 +54,6 @@ PLAN = "plan.json"
 # --------------------------------------------------------------------------
 # Money and time
 # --------------------------------------------------------------------------
-
-def money(v, dp=0):
-    return f"${v:,.{dp}f}"
-
 
 def months_between(a, b):
     return (b.year - a.year) * 12 + (b.month - a.month)
@@ -90,11 +88,7 @@ def months_to_target(target, saved, monthly, apy=0.0):
     return n if bal >= target else None
 
 
-def future_value(saved, monthly, n, apy=0.0):
-    if apy <= 0:
-        return saved + monthly * n
-    r = (1 + apy / 100.0) ** (1 / 12.0) - 1
-    return saved * (1 + r) ** n + monthly * (((1 + r) ** n - 1) / r)
+# future_value lives in utils (shared with the analysis tools).
 
 
 # --------------------------------------------------------------------------
@@ -132,56 +126,118 @@ def find_goal(plan, name):
 # Reading the real numbers out of the transactions
 # --------------------------------------------------------------------------
 
-def read_finances(csv_path, income_override=None):
-    """What comes in, what goes out, and what's genuinely fixed."""
-    with open(csv_path, newline="") as fh:
-        rows = list(csv.DictReader(fh))
-    if not rows:
-        sys.exit(f"{csv_path} is empty")
+def open_engine(source, required=True):
+    """Open a .db or a .csv through the shared engine.
 
-    by_month_spend = defaultdict(float)
-    by_month_income = defaultdict(float)
-    by_cat = defaultdict(float)
-    essential = defaultdict(float)
-    months = set()
+    Existence is checked here rather than left to sqlite, which would happily
+    create an empty store and then report that you have no transactions.
+    """
+    if not source:
+        return None
+    if not os.path.exists(source):
+        if required:
+            sys.exit(f"{source} does not exist. Build it with:  "
+                     f"python parse.py PDFs --db {DEFAULT_DB}")
+        return None
+    return Engine.from_source(source)
 
-    for r in rows:
-        try:
-            amt = float(r["amount"])
-            d = datetime.strptime(r["date"][:10], "%Y-%m-%d").date()
-        except (ValueError, KeyError):
-            continue
-        cat = r.get("category") or "Uncategorized"
-        m = d.strftime("%Y-%m")
-        months.add(m)
-        if cat == "Income" and amt < 0:
-            by_month_income[m] += -amt
-        elif amt > 0 and cat not in NON_SPEND:
-            by_month_spend[m] += amt
-            by_cat[cat] += amt
-            if cat in ESSENTIAL:
-                essential[m] += amt
 
-    if not months:
-        sys.exit("no usable rows")
+def read_finances(source=DEFAULT_DB, income_override=None, eng=None):
+    """What comes in, what goes out, what is already promised, and how much of
+    it has been checked against a statement.
 
-    # Drop the first and last month: they're usually partial and would drag
-    # every average down.
-    ordered = sorted(months)
-    full = ordered[1:-1] if len(ordered) > 2 else ordered
-    n = max(len(full), 1)
+    All of this used to be re-derived here from a CSV, which is how the planner
+    ended up quoting a different monthly average than the dashboard for the same
+    file. The Engine owns those definitions now — complete months, spend,
+    income, essentials, surplus, recurring charges — and this is only the
+    adapter that reshapes them into what the plan file stores.
+    """
+    owned = eng is None
+    eng = eng or open_engine(source)
+    try:
+        complete = eng.complete_months()
+        if not complete:
+            sys.exit(f"{source} has no usable transactions")
 
-    spend = sum(by_month_spend[m] for m in full) / n
-    inc = income_override or (sum(by_month_income[m] for m in full) / n)
-    ess = sum(essential[m] for m in full) / n
+        # Per-category monthly averages, over the same complete months the
+        # Engine averages everything else over, so `simulate --cut` is cutting
+        # from the same denominator the surplus was computed with.
+        window = set(complete)
+        by_cat = defaultdict(float)
+        for t in eng.spend():
+            if t.date[:7] in window:
+                by_cat[t.category] += t.amount
+        n = len(complete)
 
-    return {
-        "months": len(full), "monthly_spend": spend, "monthly_income": inc,
-        "essential_monthly": ess,
-        "surplus": (inc - spend) if inc else None,
-        "by_cat_monthly": {c: v / n for c, v in by_cat.items()},
-        "period": f"{full[0]} to {full[-1]}" if full else "",
-    }
+        im = eng.income_by_month()
+        earned = sum(im.get(m, 0.0) for m in complete) / n
+        return {
+            "months": n,
+            "monthly_spend": eng.monthly_average(),
+            "monthly_income": income_override if income_override else earned,
+            "essential_monthly": eng.essential_monthly(),
+            "surplus": eng.surplus(income_override or None),
+            "committed": eng.committed_monthly(),
+            # subscriptions(), not recurring(): the committed figure above
+            # excludes interest, and the count beside it has to describe the
+            # same set or the two contradict each other on screen.
+            "recurring": eng.subscriptions(),
+            "coverage": eng.coverage(),
+            "by_cat_monthly": {c: v / n for c, v in by_cat.items()},
+            "period": f"{complete[0]} to {complete[-1]}",
+        }
+    finally:
+        if owned:
+            eng.close()
+
+
+def trust_note(cov):
+    """One line on how far the numbers have been verified, or None if clean.
+
+    A savings plan is only as good as the transactions under it. Projecting a
+    finish date to the month off statements that never reconciled is false
+    precision, so say it once and let the reader discount accordingly.
+    """
+    if not cov:
+        return None
+    if not cov.get("statements"):
+        return ("nothing in this source to reconcile against, so these are the "
+                "transactions as parsed, never checked against a statement total")
+    if cov.get("trusted"):
+        return None
+    gaps = cov.get("gaps") or 0
+    gaps = gaps if isinstance(gaps, int) else len(gaps)
+    bits = []
+    if cov.get("mismatched"):
+        bits.append(f"{cov['mismatched']} disagree with their own totals")
+    if cov.get("unchecked"):
+        bits.append(f"{cov['unchecked']} never checked")
+    if gaps:
+        bits.append(f"{gaps} gap(s) in the statement history")
+    return (f"{cov.get('pct', 0):.0f}% of {cov['statements']} statements reconcile"
+            + (" — " + ", ".join(bits) if bits else "")
+            + ". Treat these figures as provisional.")
+
+
+def committed_of(plan, fin=None):
+    """Fixed monthly commitments and the charges behind them.
+
+    Falls back to whatever `init` recorded when the source is not to hand, so
+    every command tells the same story about what is already promised.
+    """
+    fin = fin or {}
+    committed = fin.get("committed")
+    if committed is None:
+        committed = plan.get("committed_monthly") or 0.0
+    # Count only what the committed figure actually sums. `recurring` carries
+    # every detected subscription including ones that stopped arriving, and
+    # printing "$213 across 13 charges" beside a total drawn from 10 of them
+    # invites the reader to divide one by the other and get a wrong answer.
+    recurring = fin.get("recurring") or []
+    live = [r for r in recurring if not getattr(r, "is_stale", None) or
+            not r.is_stale(date.today())]
+    n = len(live) or (plan.get("committed_count") or 0)
+    return committed or 0.0, recurring, n
 
 
 # --------------------------------------------------------------------------
@@ -295,6 +351,8 @@ def bar(frac, width=22):
 def show_status(plan, finances=None, quiet=False):
     surplus = plan.get("monthly_surplus")
     goals, left = plan_goals(plan, surplus)
+    committed, recurring, n_rec = committed_of(plan, finances)
+    spend = (finances or {}).get("monthly_spend") or plan.get("monthly_spend") or 0.0
 
     print()
     print("  YOUR PLAN".ljust(74))
@@ -303,13 +361,22 @@ def show_status(plan, finances=None, quiet=False):
         src = "from your statements" if finances else "as recorded"
         print(f"  Spare each month   {money(surplus):>12}   {src}")
     else:
-        print("  Spare each month          unknown   run `init --csv transactions.csv`")
+        print("  Spare each month          unknown   run `init --source finances.db`")
     if plan.get("essential_monthly"):
         print(f"  Essential spending {money(plan['essential_monthly']):>12}   "
               f"rent, utilities, food, transport, health")
+    if committed:
+        print(f"  Fixed commitments  {money(committed):>12}   "
+              f"{n_rec} recurring charges, already inside the spending above")
     if plan.get("apy"):
         print(f"  Savings rate       {plan['apy']:>11.2f}%   compounded monthly")
     print()
+
+    if committed and surplus is not None and committed >= surplus > 0:
+        print(f"  Your fixed commitments ({money(committed)}/mo) are larger than what you")
+        print(f"  have spare ({money(surplus)}/mo). They renew whether or not the month")
+        print(f"  goes well, so the plan below is the first thing that gives.")
+        print()
 
     if not goals:
         print("  No goals yet:  planner.py add \"Emergency fund\" --target 12000\n")
@@ -355,6 +422,15 @@ def show_status(plan, finances=None, quiet=False):
         print(f"    · find {money(gap)}/mo   — `planner.py simulate --cut Dining=30`")
         print(f"    · move a deadline    — `planner.py add \"<name>\" --by 2028-01`")
         print(f"    · want less          — lower a target")
+        if committed and spend:
+            print(f"\n  Finding it means cutting spending, and {money(committed)}/mo of")
+            print(f"  the {money(spend)}/mo you spend is fixed commitments that will not")
+            print(f"  move on their own. That {money(gap)} has to come out of the")
+            print(f"  {money(max(spend - committed, 0))}/mo that is flexible.")
+
+    note = trust_note((finances or {}).get("coverage") or plan.get("coverage"))
+    if note and not quiet:
+        print(f"\n  Data: {note}")
     print()
 
 
@@ -364,26 +440,43 @@ def show_status(plan, finances=None, quiet=False):
 
 def cmd_init(args):
     plan = load_plan(args.plan)
-    fin = read_finances(args.csv, args.income)
+    with open_engine(args.source) as eng:
+        fin = read_finances(args.source, args.income, eng=eng)
+    plan["source"] = args.source
     plan["monthly_spend"] = round(fin["monthly_spend"], 2)
     plan["essential_monthly"] = round(fin["essential_monthly"], 2)
+    plan["committed_monthly"] = round(fin["committed"], 2)
+    plan["committed_count"] = committed_of(plan, fin)[2]
     if fin["monthly_income"]:
         plan["income"] = round(fin["monthly_income"], 2)
         plan["monthly_surplus"] = round(fin["surplus"], 2)
     if args.apy is not None:
         plan["apy"] = args.apy
     plan["by_cat_monthly"] = {c: round(v, 2) for c, v in fin["by_cat_monthly"].items()}
+    cov = fin["coverage"]
+    plan["coverage"] = {"statements": cov["statements"], "reconciled": cov["reconciled"],
+                        "mismatched": cov["mismatched"], "unchecked": cov["unchecked"],
+                        "pct": round(cov["pct"], 1), "gaps": len(cov["gaps"]),
+                        "trusted": cov["trusted"]}
     save_plan(plan, args.plan)
 
     print(f"\nRead {fin['months']} complete month(s), {fin['period']}\n")
     print(f"  Spending      {money(fin['monthly_spend']):>12} /mo")
     print(f"  of which essential {money(fin['essential_monthly']):>7} /mo")
+    if fin["committed"]:
+        _, _, n_live = committed_of(plan, fin)
+        print(f"  of which committed {money(fin['committed']):>7} /mo across "
+              f"{n_live} recurring charges")
     if fin["monthly_income"]:
         print(f"  Income        {money(fin['monthly_income']):>12} /mo")
         print(f"  Spare         {money(fin['surplus']):>12} /mo")
     else:
         print("\n  No income found in the file. If your pay lands in an account you")
-        print("  didn't include, tell me directly:  planner.py init --csv ... --income 6200")
+        print("  didn't include, tell me directly:  planner.py init --source ... --income 6200")
+
+    note = trust_note(fin["coverage"])
+    if note:
+        print(f"\n  Data: {note}")
 
     ess = fin["essential_monthly"]
     if ess:
@@ -449,19 +542,41 @@ def cmd_contribute(args):
           f"({frac*100:.0f}%)")
 
 
+def refresh(plan, source, income=None):
+    """Re-read the source if it is there. Returns the finances dict, or None.
+
+    Missing sources are not an error here: a plan is still readable without the
+    transactions it was built from, it just cannot be brought up to date. The
+    income recorded at init is reused unless a new one is given, otherwise a
+    salary that lands outside these statements would vanish on every refresh.
+    """
+    eng = open_engine(source, required=False)
+    if eng is None:
+        return None
+    with eng:
+        fin = read_finances(source, income or plan.get("income"), eng=eng)
+    if fin["surplus"] is not None:
+        plan["monthly_surplus"] = round(fin["surplus"], 2)
+    plan["monthly_spend"] = round(fin["monthly_spend"], 2)
+    plan["essential_monthly"] = round(fin["essential_monthly"], 2)
+    plan["committed_monthly"] = round(fin["committed"], 2)
+    if fin["by_cat_monthly"]:
+        plan["by_cat_monthly"] = {c: round(v, 2) for c, v in fin["by_cat_monthly"].items()}
+    return fin
+
+
 def cmd_status(args):
     plan = load_plan(args.plan)
-    fin = None
-    if args.csv:
-        fin = read_finances(args.csv, args.income)
-        plan["monthly_surplus"] = round(fin["surplus"], 2) if fin["surplus"] else \
-            plan.get("monthly_surplus")
+    fin = refresh(plan, args.source, args.income)
     show_status(plan, fin)
 
 
 def cmd_simulate(args):
     plan = load_plan(args.plan)
+    fin = refresh(plan, args.source)
+    committed, recurring, n_rec = committed_of(plan, fin)
     base = plan.get("monthly_surplus") or 0.0
+    spend = plan.get("monthly_spend") or 0.0
     extra = 0.0
     notes = []
 
@@ -486,6 +601,17 @@ def cmd_simulate(args):
         extra += freed
         notes.append(f"cutting {cat} by {pct:.0f}% frees {money(freed)}/mo "
                      f"(of {money(monthly)})")
+        # A percentage off a category is easy to type and hard to do when most
+        # of that category renews itself. Say which charges have to go.
+        fixed = [r for r in recurring if r.category == cat]
+        if fixed:
+            locked = sum(r.per_month for r in fixed)
+            names = ", ".join(r.name[:22] for r in fixed[:3])
+            notes.append(f"  but {money(locked)}/mo of {cat} is {len(fixed)} recurring "
+                         f"charge(s) — {names}")
+            if freed > monthly - locked:
+                notes.append(f"  so a {pct:.0f}% cut means cancelling one of them, not "
+                             f"spending less on it")
 
     if args.monthly is not None:
         new_surplus = args.monthly
@@ -497,6 +623,22 @@ def cmd_simulate(args):
     for nline in notes:
         print(f"            {nline}")
     print(f"  scenario: {money(new_surplus)}/mo spare\n")
+
+    # Asserting a monthly amount above the surplus is not a scenario, it is a
+    # cut that has not been made yet, and the fixed part of the spending it
+    # would have to come out of cannot absorb it. (A --cut scenario says where
+    # the money comes from already, so it needs no lecture.)
+    short = new_surplus - base
+    if args.monthly is not None and short > 1 and spend:
+        flexible = max(spend - committed, 0)
+        print(f"  That is {money(short)}/mo more than you have spare, so it comes out of")
+        print(f"  the {money(spend)}/mo you spend — of which {money(committed)}/mo is "
+              f"{n_rec} fixed")
+        print(f"  commitments, leaving {money(flexible)}/mo that is actually flexible"
+              + ("." if short <= flexible else ", less"))
+        if short > flexible:
+            print(f"  than the cut you are assuming.")
+        print()
 
     before, _ = plan_goals(plan, base)
     after, left = plan_goals(plan, new_surplus)
@@ -523,8 +665,11 @@ def cmd_simulate(args):
 
 def cmd_report(args):
     plan = load_plan(args.plan)
+    fin = refresh(plan, args.source)
+    committed, recurring, n_rec = committed_of(plan, fin)
     goals, left = plan_goals(plan, plan.get("monthly_surplus"))
     surplus = plan.get("monthly_surplus") or 0
+    note = trust_note((fin or {}).get("coverage") or plan.get("coverage"))
 
     rows = []
     for g in goals:
@@ -602,6 +747,9 @@ font-family:var(--mono);font-size:10.5px;color:var(--soft);padding-top:10px}}
 .tick:before{{content:"";position:absolute;top:0;left:50%;width:1px;height:8px;
 background:var(--green)}}
 .tick b{{color:var(--ink)}}
+.caveat{{border-left:3px solid var(--amber);background:#FBF6E9;padding:10px 14px;
+margin:18px 0 0;font-size:12.5px;color:var(--soft)}}
+.caveat b{{color:var(--ink);font-weight:600}}
 footer{{margin-top:26px;padding-top:14px;border-top:1px solid var(--rule);
 font-size:12.5px;color:var(--soft)}}
 </style></head><body><div class="sheet">
@@ -609,12 +757,18 @@ font-size:12.5px;color:var(--soft)}}
 <h1>What you're saving for</h1>
 <div class="summary">
   <div><span>spare each month</span><b>{money(surplus)}</b></div>
+  <div><span>committed</span><b>{money(committed)}</b></div>
   <div><span>goals</span><b>{len(goals)}</b></div>
   <div><span>still to save</span><b>{money(sum(g['remaining'] for g in goals))}</b></div>
   <div><span>unassigned</span><b>{money(max(left,0))}</b></div>
 </div>
 {''.join(rows)}
 <div class="timeline">{''.join(ticks)}</div>
+{f'<p class="caveat"><b>Committed:</b> {money(committed)}/mo of the spending behind '
+ f'this plan is {n_rec} recurring charge(s) that renew on their own. It is already '
+ f'deducted from the figure above, but it is the part of a bad month you cannot cut '
+ f'in time.</p>' if committed else ''}
+{f'<p class="caveat"><b>Data:</b> {html.escape(note)}</p>' if note else ''}
 <footer>Generated locally by planner.py on {date.today():%d %b %Y}.
 Timings assume the amounts above are actually set aside every month.
 Arithmetic on your own statements, not financial advice.</footer>
@@ -625,28 +779,62 @@ Arithmetic on your own statements, not financial advice.</footer>
     print(f"Wrote {args.output}")
 
 
+def debts_from_csv(path):
+    """Balances and rates out of a legacy statements CSV."""
+    out = []
+    with open(path, newline="") as fh:
+        for r in csv.DictReader(fh):
+            try:
+                bal = float(r.get("new_balance") or 0)
+                apr = float(r.get("purchase_apr") or 0)
+            except ValueError:
+                continue
+            if bal > 50 and apr > 0:
+                out.append((f"{r.get('issuer','?')} ····{r.get('account_last4','')}",
+                            bal, apr))
+    return out
+
+
+def debts_from_store(statements):
+    """The latest balance and rate on each card, straight from the store.
+
+    The statements are already parsed and sitting next to the transactions, so
+    there is no reason to ask for a separate CSV of the same numbers.
+    """
+    latest = {}
+    for s in statements:
+        name = f"{s.issuer or '?'} ····{s.account_last4 or ''}".strip()
+        cur = latest.get(name)
+        if cur is None or (s.period_end or "") >= (cur.period_end or ""):
+            latest[name] = s
+    return [(name, s.new_balance, s.purchase_apr) for name, s in latest.items()
+            if (s.new_balance or 0) > 50 and (s.purchase_apr or 0) > 0]
+
+
 def cmd_advice(args):
-    """Where the next dollar goes when debt and goals compete."""
+    """Where the next dollar goes when debt, commitments and goals compete."""
     plan = load_plan(args.plan)
+    fin = None
+    debts = []
+    eng = open_engine(args.source, required=False)
+    if eng is not None:
+        with eng:
+            fin = read_finances(args.source, plan.get("income"), eng=eng)
+            debts = debts_from_store(eng.statements())
+        if fin["surplus"] is not None:
+            plan["monthly_surplus"] = round(fin["surplus"], 2)
+            plan["essential_monthly"] = round(fin["essential_monthly"], 2)
+    if args.statements and os.path.exists(args.statements):
+        debts = debts_from_csv(args.statements)
+
     surplus = plan.get("monthly_surplus")
     ess = plan.get("essential_monthly") or 0
+    committed, recurring, n_rec = committed_of(plan, fin)
     print()
     if not surplus:
-        print("  Run `init --csv transactions.csv` first so I know what's spare.\n")
+        print("  Run `init --source finances.db` first so I know what's spare.\n")
         return
 
-    debts = []
-    if args.statements and os.path.exists(args.statements):
-        with open(args.statements, newline="") as fh:
-            for r in csv.DictReader(fh):
-                try:
-                    bal = float(r.get("new_balance") or 0)
-                    apr = float(r.get("purchase_apr") or 0)
-                except ValueError:
-                    continue
-                if bal > 50 and apr > 0:
-                    debts.append((f"{r.get('issuer','?')} ····{r.get('account_last4','')}",
-                                  bal, apr))
     seen, uniq = set(), []
     for name, bal, apr in debts:
         if name in seen:
@@ -654,15 +842,37 @@ def cmd_advice(args):
         seen.add(name)
         uniq.append((name, bal, apr))
 
+    step = 0
+
+    def n():
+        nonlocal step
+        step += 1
+        return step
+
     print("  ORDER OF OPERATIONS")
     print("  " + "─" * 72)
     starter = min(ess, 1000) if ess else 1000
-    print(f"  1. A small buffer first — about {money(starter)}, roughly one month of")
+    print(f"  {n()}. A small buffer first — about {money(starter)}, roughly one month of")
     print(f"     essentials. Without it any surprise goes straight back onto a card.")
+
+    if committed:
+        print(f"\n  {n()}. Know what is already promised: {money(committed)}/mo across "
+              f"{n_rec} recurring")
+        print(f"     charges, {money(committed * 12)} a year. Your surplus is "
+              f"{money(surplus)}/mo, and that")
+        print(f"     commitment is already deducted from it — but it is the part of a bad")
+        print(f"     month you cannot cancel in time, so it caps how much of the surplus")
+        print(f"     is really yours to move.")
+        for r in recurring[:3]:
+            print(f"       · {r.name[:28]:<28} {money(r.per_month):>8}/mo  "
+                  f"{r.cadence}, {money(r.per_year)}/yr")
+        if committed >= surplus:
+            print(f"     These commitments are larger than the {money(surplus)}/mo you have")
+            print(f"     spare. Cancelling one is worth more than any goal below.")
 
     if uniq:
         worst = max(uniq, key=lambda d: d[2])
-        print(f"\n  2. Then the {worst[2]:.2f}% debt on {worst[0]} ({money(worst[1])}).")
+        print(f"\n  {n()}. Then the {worst[2]:.2f}% debt on {worst[0]} ({money(worst[1])}).")
         yearly = worst[1] * worst[2] / 100
         print(f"     That balance costs about {money(yearly)}/yr while it sits there.")
         print(f"     Paying it down avoids that cost with certainty. A savings account")
@@ -670,20 +880,34 @@ def cmd_advice(args):
               f"{money(worst[1] * (plan.get('apy') or 4) / 100)}/yr on the same money.")
         print(f"     The gap is {money(yearly - worst[1] * (plan.get('apy') or 4) / 100)}/yr "
               f"in favour of clearing the debt.")
-        print(f"\n  3. Then the full emergency fund: "
+        print(f"\n  {n()}. Then the full emergency fund: "
               f"{money(ess * 3)} to {money(ess * 6)} (3-6 months of essentials).")
-        print(f"  4. Then everything else on your list.")
+        print(f"  {n()}. Then everything else on your list.")
     else:
-        print(f"\n  2. Then the full emergency fund: {money(ess * 3)} to {money(ess * 6)}")
+        print(f"\n  {n()}. Then the full emergency fund: {money(ess * 3)} to {money(ess * 6)}")
         print(f"     (3 to 6 months of your essential spending, {money(ess)}/mo).")
-        print(f"  3. Then everything else on your list.")
+        print(f"  {n()}. Then everything else on your list.")
         if not args.statements:
-            print(f"\n  No card balances given. If you carry any, add --statements "
-                  f"statements.csv")
+            print(f"\n  No card balances found. If you carry any, point --source at a store")
+            print(f"  with statements in it, or add --statements statements.csv,")
             print(f"  and I'll tell you whether paying them beats saving.")
 
+    note = trust_note((fin or {}).get("coverage") or plan.get("coverage"))
+    if note:
+        print(f"\n  Data: {note}")
     print(f"\n  This is arithmetic on your numbers, not financial advice. Rates, taxes")
     print(f"  and your own risk tolerance all matter and I don't know them.\n")
+
+
+def add_source(parser):
+    """--source is either finances.db or a legacy transactions CSV.
+
+    --csv was the old name for the same argument. It still works, undocumented,
+    so existing scripts and muscle memory do not break.
+    """
+    parser.add_argument("--source", default=DEFAULT_DB,
+                        help=f"finances.db or a transactions CSV (default {DEFAULT_DB})")
+    parser.add_argument("--csv", dest="source", help=argparse.SUPPRESS)
 
 
 def main():
@@ -692,7 +916,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     i = sub.add_parser("init", help="read your spending and size an emergency fund")
-    i.add_argument("--csv", required=True)
+    add_source(i)
     i.add_argument("--income", type=float, help="monthly take-home, if it isn't in the file")
     i.add_argument("--apy", type=float, help="what your savings account pays")
     i.set_defaults(func=cmd_init)
@@ -720,25 +944,31 @@ def main():
     c.set_defaults(func=cmd_contribute)
 
     s = sub.add_parser("status", help="where everything stands")
-    s.add_argument("--csv", help="refresh the surplus from transactions first")
+    add_source(s)
     s.add_argument("--income", type=float)
     s.set_defaults(func=cmd_status)
 
     sim = sub.add_parser("simulate", help="what if you saved more, or cut something")
+    add_source(sim)
     sim.add_argument("--monthly", type=float, help="assume this much set aside")
     sim.add_argument("--cut", action="append", metavar="CAT=PCT",
                      help="e.g. --cut Dining=30 (repeatable)")
     sim.set_defaults(func=cmd_simulate)
 
     r = sub.add_parser("report", help="write an HTML plan")
+    add_source(r)
     r.add_argument("-o", "--output", default="plan.html")
     r.set_defaults(func=cmd_report)
 
     ad = sub.add_parser("advice", help="debt or savings first, with the numbers")
-    ad.add_argument("--statements", help="statements.csv, to weigh debt against saving")
+    add_source(ad)
+    ad.add_argument("--statements",
+                    help="legacy statements.csv; the store's own statements are "
+                         "used when this is not given")
     ad.set_defaults(func=cmd_advice)
 
     args = ap.parse_args()
+
     args.func(args)
 
 

@@ -1,14 +1,29 @@
 #!/usr/bin/env python3
 """
-analyze_finances.py — turn a cleaned transactions CSV into a spending dashboard.
+analyze.py — turn the shared finances store into a spending dashboard.
 
-Reads the CSV produced by parse_statements.py and writes:
+Input is whatever engine.load_transactions understands: the SQLite store that
+parse.py writes, or a legacy transactions CSV. Output is two files:
+
     finance_dashboard.html   a single self-contained page (no internet needed)
     insights.md              the same findings as plain text
 
-    python analyze_finances.py transactions.csv
-    python analyze_finances.py transactions.csv --income 6200 -o dash.html
-    python analyze_finances.py transactions.csv --exclude-merchant "TUITION|IRS"
+    python analyze.py
+    python analyze.py --db finances.db -o dash.html --markdown insights.md
+    python analyze.py cleanedData/transactions.csv
+    python analyze.py --db finances.db --income 6200
+    python analyze.py --db finances.db --exclude-merchant "TUITION|IRS"
+
+The dashboard opens with what it is allowed to claim. Engine.coverage() reports
+how many statements reconcile against their own printed totals, and that verdict
+is the first thing on the page: a figure that cannot be traced back to a
+statement line must not be presented as if it were certain. Everything below the
+banner is arithmetic on rows whose provenance the banner has just described.
+
+The analysis that is genuinely local to this file — anomalies, cross-cutting
+patterns, savings arithmetic, the SVG charts — stays here. Everything that other
+tools also need (what counts as spending, which months are complete, what
+repeats) comes from engine.py and utils.py so the numbers agree everywhere.
 
 Standard library only. Nothing is uploaded anywhere.
 """
@@ -23,17 +38,15 @@ import sys
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
-# Category groups come from the shared taxonomy so every script agrees.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from categorizer import NON_SPEND, DISCRETIONARY, WASTE
-except ImportError:
-    NON_SPEND = {"Payment", "Credits/Refunds", "Transfers/Cash", "Income"}
-    DISCRETIONARY = {"Dining", "Coffee", "Delivery", "Alcohol/Bars", "Shopping",
-                     "Big Box", "Electronics", "Clothing", "Home", "Entertainment",
-                     "Personal Care", "Travel", "Lodging", "Subscriptions",
-                     "Software/Tools", "Gaming", "Gifts", "Pets", "Fitness"}
-    WASTE = {"Fees/Interest"}
+
+# The read model and the shared taxonomy: one definition of "spending" for the
+# whole toolchain, re-exported by engine.py.
+from engine import DISCRETIONARY, WASTE, Engine  # noqa: E402
+from database import DEFAULT_DB  # noqa: E402
+from models import Statement  # noqa: E402
+# Shared money/merchant/debt helpers — one definition for the whole toolchain.
+from utils import fmt_money as money, merchant_key, payoff_months  # noqa: E402
 
 DELIVERY = re.compile(r"doordash|uber ?eats|grubhub|seamless|postmates|caviar", re.I)
 
@@ -42,114 +55,60 @@ DELIVERY = re.compile(r"doordash|uber ?eats|grubhub|seamless|postmates|caviar", 
 # Loading
 # --------------------------------------------------------------------------
 
-class Txn:
-    __slots__ = ("d", "desc", "merchant", "amount", "category", "issuer",
-                 "last4", "source", "key")
+def open_engine(source, exclude_merchant=None, exclude_source=None):
+    """Open a .db or .csv as an Engine, minus the rows the user excluded.
 
-    def __init__(self, row):
-        self.d = datetime.strptime(row["date"][:10], "%Y-%m-%d").date()
-        self.desc = row.get("description", "")
-        self.merchant = (row.get("merchant") or self.desc).strip()
-        self.amount = float(row["amount"])
-        self.category = row.get("category") or "Uncategorized"
-        self.issuer = row.get("issuer", "")
-        self.last4 = row.get("account_last4", "")
-        self.source = row.get("source_file", "")
-        self.key = merchant_key(self.merchant)
-
-    @property
-    def month(self):
-        return self.d.strftime("%Y-%m")
-
-
-def merchant_key(name):
-    s = name.upper().strip()
-    # Pseudonymised input (from anonymize.py or similar) is already a clean key.
-    if re.fullmatch(r"[A-Z]+_\d+", s) or s.startswith("OTHER (") or s.startswith("CARD_"):
-        return s
-    s = re.sub(r"\bAMZN\b|\bAMAZON MKTPL\b", "AMAZON", s)
-    s = re.sub(r"[^A-Z0-9_ ]+", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    stop = {"POS", "PURCHASE", "PAYMENT", "RECURRING", "INC", "LLC", "CO", "THE",
-            "USA", "US", "COM", "STORE", "SQ", "TST", "PY"}
-    toks = []
-    for t in s.split():
-        if t in stop or len(t) < 2:
-            continue
-        if t.isdigit() and len(t) >= 3:          # store or reference number
-            continue
-        if "_" not in t and len(t) >= 8 and sum(ch.isdigit() for ch in t) >= 2:
-            continue                             # authorisation code
-        toks.append(t)
-    return " ".join(toks[:3]) or s
-
-
-def load(path, exclude_merchant=None, exclude_source=None):
-    with open(path, newline="") as fh:
-        rows = list(csv.DictReader(fh))
-    if not rows:
-        sys.exit(f"{path} is empty")
-    missing = {"date", "amount"} - set(rows[0])
-    if missing:
-        sys.exit(f"{path} is missing required column(s): {', '.join(sorted(missing))}")
-
-    txns = []
-    for r in rows:
-        try:
-            t = Txn(r)
-        except (ValueError, KeyError):
-            continue
-        if exclude_merchant and exclude_merchant.search(t.merchant + " " + t.desc):
-            continue
-        if exclude_source and exclude_source.search(t.source):
-            continue
-        txns.append(t)
-    return txns
+    ``with_transactions`` narrows the rows while keeping the store behind them,
+    so the excluded page still knows which statements reconcile. An Engine built
+    from a bare row list has no database, and the trust banner would quietly
+    report that nothing had been verified.
+    """
+    eng = Engine.from_source(source)
+    keep = [t for t in eng.transactions if t.d]          # undated rows help nobody
+    if exclude_merchant:
+        keep = [t for t in keep
+                if not exclude_merchant.search(f"{t.merchant} {t.description}")]
+    if exclude_source:
+        keep = [t for t in keep if not exclude_source.search(t.source_file)]
+    if not keep:
+        sys.exit(f"{source} has no usable transactions after filtering.")
+    return eng.with_transactions(keep)
 
 
 def load_statements(path):
-    """Per-statement balances/limits/APR from parse_statements.py --statements."""
+    """Statement summaries from a --statements CSV, as Statement models.
+
+    Only needed when the input is a legacy CSV. A .db already carries its
+    statements, and Engine.statements() returns them.
+    """
     if not path or not os.path.exists(path):
         return []
     with open(path, newline="") as fh:
-        rows = list(csv.DictReader(fh))
+        return [Statement.from_row(r) for r in csv.DictReader(fh)]
 
-    def num(r, k):
-        try:
-            return float(r[k]) if r.get(k) not in (None, "") else None
-        except ValueError:
-            return None
 
-    out = []
-    for r in rows:
-        end = ""
-        m = re.search(r"(\d{4}-\d{2}-\d{2})\s*$", r.get("statement_period", "") or "")
-        if m:
-            end = m.group(1)
-        out.append({
-            "card": f"{r.get('issuer','?')} ····{r.get('account_last4','????')}",
-            "issuer": r.get("issuer", ""), "last4": r.get("account_last4", ""),
-            "period": r.get("statement_period", ""), "end": end,
-            "balance": num(r, "new_balance"), "limit": num(r, "credit_limit"),
-            "util": num(r, "utilization_pct"), "apr": num(r, "purchase_apr"),
-            "interest": num(r, "interest_charged") or 0.0,
-            "fees": num(r, "fees_charged") or 0.0,
-            "minimum": num(r, "minimum_payment"),
-            "ytd_interest": num(r, "ytd_interest"),
+def card_views(statements):
+    """The per-card view the cards section renders, newest statement per card."""
+    views = []
+    for s in statements:
+        end = s.period_end
+        if not end:
+            m = re.search(r"(\d{4}-\d{2}-\d{2})\s*$", s.statement_period or "")
+            end = m.group(1) if m else ""
+        views.append({
+            "card": f"{s.issuer or '?'} ····{s.account_last4 or '????'}",
+            "issuer": s.issuer, "last4": s.account_last4,
+            "period": s.statement_period, "end": end,
+            "balance": s.new_balance, "limit": s.credit_limit,
+            "util": s.utilization_pct, "apr": s.purchase_apr,
+            "interest": s.interest_charged or 0.0,
+            "fees": s.fees_charged or 0.0,
+            "minimum": s.minimum_payment,
+            "ytd_interest": s.ytd_interest,
+            "trusted": s.trusted,
         })
-    out.sort(key=lambda s: s["end"])
-    return out
-
-
-def payoff_months(balance, apr, payment):
-    """Months to clear a balance at a fixed monthly payment. None if it never clears."""
-    if not balance or not apr or not payment or payment <= 0:
-        return None
-    r = apr / 100.0 / 12.0
-    if payment <= balance * r + 0.01:
-        return None
-    import math
-    return math.log(payment / (payment - balance * r)) / math.log(1 + r)
+    views.sort(key=lambda s: s["end"])
+    return views
 
 
 # --------------------------------------------------------------------------
@@ -175,67 +134,57 @@ def mad(values):
     return stats.median([abs(v - m) for v in values])
 
 
-def analyze(txns, income=None, statements=None):
-    spend = [t for t in txns if t.amount > 0 and t.category not in NON_SPEND]
+def analyze(eng, income=None, statements=None):
+    """Assemble everything the two renderers need from the shared read model.
+
+    The aggregates every tool agrees on (spending rows, complete months, totals
+    by month and category, merchants, recurring charges) come straight from the
+    Engine. What is left here is the analysis nobody else does.
+    """
+    txns = eng.transactions
+    spend = eng.spend()
     if not spend:
         sys.exit("No spending rows found (everything was a payment or transfer).")
 
-    first, last = min(t.d for t in spend), max(t.d for t in spend)
+    rng = eng.dates()
+    first, last = rng
     months = month_range(first, last)
 
-    # A month is "complete" only if the data actually covers most of it.
-    complete = []
-    for m in months:
-        y, mo = int(m[:4]), int(m[5:])
-        m_start = date(y, mo, 1)
-        m_end = (m_start.replace(day=28) + timedelta(days=7)).replace(day=1) - timedelta(days=1)
-        covered_start = max(m_start, first)
-        covered_end = min(m_end, last)
-        days = (covered_end - covered_start).days + 1
-        if days >= (m_end - m_start).days * 0.85:
-            complete.append(m)
-    if not complete:
-        complete = months[:]
+    complete = [m for m in eng.complete_months() if m in set(months)] or months[:]
+    by_month = defaultdict(float, eng.by_month())
+    by_cat = defaultdict(float, eng.by_category())
 
-    by_month = defaultdict(float)
-    by_cat = defaultdict(float)
+    # Category x month is the one cut the engine does not keep, because this is
+    # the only tool that draws it.
     cat_month = defaultdict(lambda: defaultdict(float))
     cat_count = Counter()
     for t in spend:
-        by_month[t.month] += t.amount
-        by_cat[t.category] += t.amount
         cat_month[t.category][t.month] += t.amount
         cat_count[t.category] += 1
 
     n_complete = max(len(complete), 1)
-    total = sum(t.amount for t in spend)
-    total_complete = sum(by_month[m] for m in complete)
-    monthly_avg = total_complete / n_complete
+    total = eng.total_spend()
+    monthly_avg = eng.monthly_average()
 
-    # merchants
+    merchants = eng.merchants()
     merch = defaultdict(list)
     for t in spend:
-        merch[t.key].append(t)
-    merchants = []
-    for k, ts in merch.items():
-        amts = [t.amount for t in ts]
-        merchants.append({
-            "key": k,
-            "name": Counter(t.merchant for t in ts).most_common(1)[0][0],
-            "category": Counter(t.category for t in ts).most_common(1)[0][0],
-            "total": sum(amts), "n": len(ts),
-            "avg": sum(amts) / len(ts),
-            "last": max(t.d for t in ts),
-        })
-    merchants.sort(key=lambda m: -m["total"])
+        merch[merchant_key(t.merchant)].append(t)
 
-    recurring = detect_recurring(merch)
-    committed = sum(r["monthly"] for r in recurring)
+    # The standing-charges section is about what you could cancel. Interest bills
+    # every month at a steady amount and looks identical to a subscription, so the
+    # engine keeps the two lists apart; the committed total has to be the sum of
+    # whichever list is actually printed, or the table and its footer disagree.
+    recurring = (eng.subscriptions() if hasattr(eng, "subscriptions") else eng.recurring())
+    committed = sum(r.per_month for r in recurring)
 
     waste_txns = [t for t in spend if t.category in WASTE]
     waste_total = sum(t.amount for t in waste_txns)
 
     disc_total = sum(by_cat[c] for c in by_cat if c in DISCRETIONARY)
+
+    # A .db carries its own statements; a CSV needs the --statements sidecar.
+    stmts = statements or eng.statements()
 
     return {
         "txns": txns, "spend": spend, "first": first, "last": last,
@@ -247,52 +196,11 @@ def analyze(txns, income=None, statements=None):
         "disc_total": disc_total, "income": income,
         "anomalies": find_anomalies(spend, merch),
         "patterns": find_patterns(spend, by_month, complete, n_complete),
-        "accounts": sorted({(t.issuer, t.last4) for t in txns if t.issuer}),
-        "statements": statements or [],
+        "accounts": sorted({(t.issuer, t.account_last4) for t in txns if t.issuer}),
+        "statements": card_views(stmts),
+        "coverage": eng.coverage(),
+        "today": date.today(),
     }
-
-
-def detect_recurring(merch):
-    """A charge is recurring if it repeats on a steady cadence at a steady price."""
-    out = []
-    for k, ts in merch.items():
-        if len(ts) < 3:
-            continue
-        ds = sorted(t.d for t in ts)
-        span = (ds[-1] - ds[0]).days
-        if span < 55:
-            continue
-        gaps = [(ds[i + 1] - ds[i]).days for i in range(len(ds) - 1)]
-        gaps = [g for g in gaps if g > 0]
-        if len(gaps) < 2:
-            continue
-        med_gap = stats.median(gaps)
-        if med_gap < 6 or med_gap > 400:
-            continue
-        if mad(gaps) / med_gap > 0.34:          # cadence too irregular
-            continue
-        amts = [t.amount for t in ts]
-        med_amt = stats.median(amts)
-        if med_amt <= 0 or mad(amts) / med_amt > 0.22:   # price too variable
-            continue
-
-        cadence = ("weekly" if med_gap <= 9 else "biweekly" if med_gap <= 18 else
-                   "monthly" if med_gap <= 45 else "quarterly" if med_gap <= 115 else
-                   "semiannual" if med_gap <= 200 else "annual")
-        per_year = 365.0 / med_gap
-        first_amt = stats.median(amts[:max(1, len(amts) // 3)])
-        last_amt = stats.median(amts[-max(1, len(amts) // 3):])
-        out.append({
-            "name": Counter(t.merchant for t in ts).most_common(1)[0][0],
-            "category": Counter(t.category for t in ts).most_common(1)[0][0],
-            "cadence": cadence, "amount": med_amt, "n": len(ts),
-            "annual": med_amt * per_year, "monthly": med_amt * per_year / 12.0,
-            "first_seen": ds[0], "last_seen": ds[-1],
-            "price_change": (last_amt - first_amt) if first_amt else 0.0,
-            "price_pct": ((last_amt - first_amt) / first_amt * 100) if first_amt else 0.0,
-        })
-    out.sort(key=lambda r: -r["annual"])
-    return out
 
 
 def find_anomalies(spend, merch):
@@ -300,7 +208,7 @@ def find_anomalies(spend, merch):
 
     seen = defaultdict(list)
     for t in spend:
-        seen[(t.key, round(t.amount, 2))].append(t)
+        seen[(merchant_key(t.merchant), round(t.amount, 2))].append(t)
     for (k, amt), ts in seen.items():
         if len(ts) < 2:
             continue
@@ -332,7 +240,7 @@ def find_patterns(spend, by_month, complete, n_complete):
     """Cross-cutting observations that a category table alone won't surface."""
     p = {}
     dining = [t for t in spend if t.category in ("Dining", "Delivery", "Coffee")]
-    deliv = [t for t in dining if DELIVERY.search(t.merchant + " " + t.desc)]
+    deliv = [t for t in dining if DELIVERY.search(f"{t.merchant} {t.description}")]
     if dining:
         p["dining_total"] = sum(t.amount for t in dining)
         p["delivery_total"] = sum(t.amount for t in deliv)
@@ -383,6 +291,76 @@ def savings_scenarios(a):
                      "cut50": monthly * 0.50 * 12})
     rows.sort(key=lambda r: -r["cut30"])
     return rows
+
+
+# --------------------------------------------------------------------------
+# Trust
+# --------------------------------------------------------------------------
+
+def trust_verdict(a):
+    """Reduce Engine.coverage() to the sentence this page is entitled to lead with.
+
+    The test is deliberately unforgiving: unless every statement reconciles
+    against its own printed totals and no statement month is missing, the page
+    says so at the top. A statement that was never checked is not evidence of
+    anything, so it counts against the verdict exactly as a mismatch does — the
+    difference is only in how it is described.
+    """
+    cov = a["coverage"]
+    n = cov["statements"]
+    gap_total = sum(abs(s.reconcile_diff or 0) for s in cov["mismatches"])
+    lines = []
+
+    if not n:
+        level = "warn"
+        headline = "Nothing below has been checked against a statement"
+        lines.append("This source carries no statement summaries, so no total on this "
+                     "page has been reconciled against a printed figure. Every number "
+                     "here is what the parser believed, not what a statement says.")
+        if a["statements"]:
+            lines.append("The card table further down came from a statements CSV, which "
+                         "stores no reconciliation result either. Read it the same way. "
+                         "Point this tool at the .db store to get a verdict.")
+    elif cov["trusted"]:
+        level = "good"
+        headline = f"All {n} statements reconcile against their printed totals"
+        lines.append("Extracted charges match the purchase total each statement prints "
+                     "for itself, and no statement period is missing. The figures below "
+                     "trace back to paper.")
+    else:
+        level = "bad" if cov["mismatched"] else "warn"
+        headline = (f"{cov['reconciled']} of {n} statements reconcile — "
+                    f"{cov['pct']:.0f}% of this page is verified")
+        if cov["mismatched"] == 1:
+            lines.append(f"One statement disagrees with its own printed total by "
+                         f"{money(gap_total, 2)}. Wherever it contributes, the figures "
+                         f"below are wrong by some part of that gap.")
+        elif cov["mismatched"]:
+            lines.append(f"{cov['mismatched']} statements disagree with their own printed "
+                         f"totals, {money(gap_total, 2)} apart in aggregate. Wherever they "
+                         f"contribute, the figures below are wrong by some part of that gap.")
+        if cov["unchecked"] == 1:
+            lines.append("One statement was never checked: no reconciliation result was "
+                         "stored for it, so the charges taken from it are unverified "
+                         "rather than verified-good.")
+        elif cov["unchecked"]:
+            lines.append(f"{cov['unchecked']} statements were never checked: no "
+                         f"reconciliation result was stored for them, so the charges taken "
+                         f"from them are unverified rather than verified-good.")
+        if not cov["reconciled"]:
+            lines.append("Not one statement has been confirmed against its printed "
+                         "totals, so treat every figure on this page as provisional.")
+
+    gap_lines = [f"{g['account']}: no statement covers the {g['days']} days between "
+                 f"{g['after']} and {g['before']}."
+                 for g in cov["gaps"][:6]]
+    return {"level": level, "headline": headline, "lines": lines,
+            "gap_total": gap_total, "gap_lines": gap_lines, "cov": cov}
+
+
+def stmt_label(s):
+    who = f"{s.issuer} ····{s.account_last4}".strip()
+    return who if who not in ("····", "") else (s.source_file or "unnamed statement")
 
 
 # --------------------------------------------------------------------------
@@ -525,6 +503,30 @@ tfoot td{border-top:1.5px solid var(--ink);border-bottom:0;font-family:var(--mon
 .cols .xlab{font-size:9.5px}
 .cols .vlab{font-size:9px;fill:#7C8F82}
 
+/* the trust banner: the first thing read, so it gets the loudest treatment */
+.trust{margin:22px 0 0;border:1px solid var(--rule-strong);border-left:5px solid var(--soft);
+       background:#fff;padding:16px 20px}
+.trust.good{border-left-color:var(--green)}
+.trust.warn{border-left-color:var(--amber)}
+.trust.bad{border-left-color:var(--red)}
+.trust .stamp{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+              color:var(--soft)}
+.trust h2{font-family:var(--display);font-size:22px;margin:4px 0 8px;line-height:1.2}
+.trust.good h2{color:var(--green)}
+.trust.warn h2{color:var(--amber)}
+.trust.bad h2{color:var(--red)}
+.trust p{margin:0 0 8px;max-width:72ch;color:var(--soft);font-size:14px}
+.trust p:last-child{margin-bottom:0}
+.trust .tally{display:flex;flex-wrap:wrap;gap:6px 22px;font-family:var(--mono);font-size:12px;
+              margin:10px 0 12px;color:var(--soft)}
+.trust .tally b{font-size:15px;color:var(--ink);font-weight:700}
+.trust .tally .ok b{color:var(--green)}
+.trust .tally .bad b{color:var(--red)}
+.trust .tally .unk b{color:var(--amber)}
+.trust table{margin-top:6px}
+.trust td.sub{text-align:left;max-width:30ch;white-space:normal}
+.trust .gaps{border-top:1px dotted var(--rule);margin-top:12px;padding-top:10px}
+.trust .gaps li{font-size:13.5px;color:var(--soft)}
 .flags{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:14px;margin-top:6px}
 .flag{border:1px solid var(--rule);border-left:3px solid var(--amber);padding:12px 14px;
       background:#fff}
@@ -582,12 +584,56 @@ document.querySelectorAll('button.tgl').forEach(function(b){
 """
 
 
-def money(v, dp=0):
-    return f"${v:,.{dp}f}"
-
-
 def esc(s):
     return html.escape(str(s))
+
+
+def trust_section(a):
+    """The banner at the top of the page: how much of this is actually verified."""
+    v = trust_verdict(a)
+    cov = v["cov"]
+    n = cov["statements"]
+
+    tally = ""
+    if n:
+        tally = (f'<div class="tally">'
+                 f'<span class="ok">reconciled <b>{cov["reconciled"]}</b> of {n}</span>'
+                 f'<span class="bad">mismatched <b>{cov["mismatched"]}</b></span>'
+                 f'<span class="unk">unchecked <b>{cov["unchecked"]}</b></span>'
+                 f'<span>unreconciled gap <b>{money(v["gap_total"], 2)}</b></span>'
+                 f'</div>')
+
+    worst = ""
+    if cov["mismatches"]:
+        rows = "".join(
+            f'<tr><td class="name">{esc(stmt_label(s))}'
+            f'<div class="sub">{esc(s.source_file)}</div></td>'
+            f'<td class="num">{esc(s.statement_period or "—")}</td>'
+            f'<td class="money">{money(s.purchases, 2) if s.purchases is not None else "&mdash;"}</td>'
+            f'<td class="money">{money(s.charges_extracted, 2) if s.charges_extracted is not None else "&mdash;"}</td>'
+            f'<td class="money bad"><b>{money(abs(s.reconcile_diff or 0), 2)}</b></td>'
+            f'<td class="sub">{esc(s.reconcile_note or "")}</td></tr>'
+            for s in cov["mismatches"][:8])
+        worst = (f'<div class="scroll"><table><thead><tr><th>Statement</th><th>Period</th>'
+                 f'<th>Printed purchases</th><th>Charges extracted</th><th>Gap</th>'
+                 f'<th>Note</th></tr></thead><tbody>{rows}</tbody></table></div>')
+
+    gaps = ""
+    if v["gap_lines"]:
+        items = "".join(f"<li>{esc(g)}</li>" for g in v["gap_lines"])
+        more = (f'<p>and {len(cov["gaps"]) - len(v["gap_lines"])} more.</p>'
+                if len(cov["gaps"]) > len(v["gap_lines"]) else "")
+        gaps = (f'<div class="gaps"><p><b>Months are missing.</b> Every total, average and '
+                f'trend below is computed on incomplete data — spending in the periods no '
+                f'statement covers is simply absent, not zero.</p>'
+                f'<ul class="summary">{items}</ul>{more}</div>')
+
+    body = "".join(f"<p>{esc(t)}</p>" for t in v["lines"])
+    return f"""<section class="trust {v['level']}">
+  <div class="stamp">Provenance &middot; read this before the numbers</div>
+  <h2>{esc(v['headline'])}</h2>
+  {tally}{body}{worst}{gaps}
+</section>"""
 
 
 def cards_section(a):
@@ -618,8 +664,10 @@ def cards_section(a):
         min_txt = money(s["minimum"]) if s["minimum"] else "&mdash;"
         util_txt = f"{util:.0f}%" if util is not None else "&mdash;"
         int_cls = "bad" if (s["interest"] + s["fees"]) else ""
+        # Say which of these came off a statement that was never confirmed.
+        mark = "" if s["trusted"] else '<span class="pill">unreconciled</span>'
         rows.append(
-            f'<tr><td class="name">{esc(s["card"])}'
+            f'<tr><td class="name">{esc(s["card"])} {mark}'
             f'<div class="sub">{esc(s["period"] or "-")}</div></td>'
             f'<td class="money">{bal_txt}</td>'
             f'<td class="money">{lim_txt}</td>'
@@ -742,24 +790,56 @@ def render_html(a, title):
     totals_row = "".join(f'<td>{a["by_month"][m]/1000:.1f}k</td>' for m in show_months)
 
     # ---------- recurring ----------
-    rec_rows = []
+    today = a["today"]
+    rec_rows, drifting, stale_charges = [], [], []
     for i, r in enumerate(a["recurring"]):
-        up = r["price_pct"] > 4
-        stale = (a["last"] - r["last_seen"]).days > 70
+        up = r.price_pct > 4
+        stale = r.is_stale(today)
         tags = []
         if up:
-            tags.append(f'<span class="pill up">+{r["price_pct"]:.0f}% price</span>')
+            tags.append(f'<span class="pill up">+{r.price_pct:.0f}% price</span>')
+        elif r.price_pct < -4:
+            tags.append(f'<span class="pill">{r.price_pct:.0f}% price</span>')
         if stale:
-            tags.append(f'<span class="pill">last seen {r["last_seen"]:%b %Y}</span>')
+            tags.append(f'<span class="pill up">overdue since {r.next_expected:%d %b}</span>')
+        if up:
+            drifting.append(r)
+        if stale:
+            stale_charges.append(r)
+        nxt = f"{r.next_expected:%d %b %Y}" if r.next_expected else "—"
         rec_rows.append(
-            f'<tr class="{"extra" if i >= 12 else ""}"><td class="name">{esc(r["name"])} '
-            f'{" ".join(tags)}<div class="sub">{esc(r["category"])}</div></td>'
-            f'<td class="num">{r["cadence"]}</td>'
-            f'<td class="money" data-v="{r["amount"]}">{money(r["amount"], 2)}</td>'
-            f'<td class="num" data-v="{r["n"]}">{r["n"]}</td>'
-            f'<td class="money" data-v="{r["monthly"]}">{money(r["monthly"])}</td>'
-            f'<td class="money" data-v="{r["annual"]}"><b>{money(r["annual"])}</b></td></tr>')
-    rec_annual = sum(r["annual"] for r in a["recurring"])
+            f'<tr class="{"extra" if i >= 12 else ""}"><td class="name">{esc(r.name)} '
+            f'{" ".join(tags)}<div class="sub">{esc(r.category)} &middot; '
+            f'confidence {r.confidence:.0%}</div></td>'
+            f'<td class="num">{r.cadence}</td>'
+            f'<td class="money" data-v="{r.amount}">{money(r.amount, 2)}</td>'
+            f'<td class="num" data-v="{r.n}">{r.n}</td>'
+            f'<td class="num">{nxt}</td>'
+            f'<td class="money" data-v="{r.per_month}">{money(r.per_month)}</td>'
+            f'<td class="money" data-v="{r.per_year}"><b>{money(r.per_year)}</b></td></tr>')
+    rec_annual = sum(r.per_year for r in a["recurring"])
+
+    rec_notes = []
+    if drifting:
+        worst = max(drifting, key=lambda r: r.price_pct)
+        # Times per year is per_year/amount, so the drift costs that much more.
+        per_year_extra = worst.price_change * (worst.per_year / worst.amount)
+        head = ("<b>One charge has crept up in price</b> since it started"
+                if len(drifting) == 1 else
+                f"<b>{len(drifting)} charges have crept up in price</b> since they started"
+                f" — the worst")
+        rec_notes.append(
+            f'{head}: {esc(worst.name)} costs {money(worst.price_change, 2)} more each '
+            f'time than it did ({worst.price_pct:+.0f}%), {money(per_year_extra, 2)} a year.')
+    if stale_charges:
+        names = ", ".join(esc(r.name) for r in stale_charges[:4])
+        head = ("<b>One charge is overdue</b>" if len(stale_charges) == 1
+                else f"<b>{len(stale_charges)} charges are overdue</b>")
+        rec_notes.append(
+            f'{head} — {names} should have billed again by now. Either the subscription '
+            f'was cancelled and this list is out of date, or the card on file died and '
+            f'something is about to lapse. Both are worth a minute.')
+    rec_notes_html = ("".join(f'<p class="lede">{t}</p>' for t in rec_notes))
 
     # ---------- merchants ----------
     top = a["merchants"][:30]
@@ -855,6 +935,8 @@ def render_html(a, title):
   </div>
 </header>
 
+{trust_section(a)}
+
 <section>
   <div class="eyebrow">Summary of account <span>transfers and card payments excluded</span></div>
   <ul class="summary">{sum_html}</ul>
@@ -889,11 +971,12 @@ def render_html(a, title):
   <p class="lede">Charges that repeat on a steady schedule at a steady price. This is the
   part of your spending that continues whether you think about it or not —
   <b>{money(rec_annual)} a year</b>, {money(a['committed'])} a month.</p>
+  {rec_notes_html}
   <div class="scroll"><table id="rec"><thead><tr><th class="sortable">Merchant</th><th>Cadence</th>
-    <th class="sortable">Each time</th><th class="sortable">Seen</th>
+    <th class="sortable">Each time</th><th class="sortable">Seen</th><th>Next due</th>
     <th class="sortable">Per month</th><th class="sortable">Per year</th></tr></thead>
     <tbody>{"".join(rec_rows)}</tbody>
-    <tfoot><tr><td>{len(a['recurring'])} standing charges</td><td></td><td></td><td></td>
+    <tfoot><tr><td>{len(a['recurring'])} standing charges</td><td></td><td></td><td></td><td></td>
       <td>{money(a['committed'])}</td><td>{money(rec_annual)}</td></tr></tfoot></table></div>
   <div class="toolbar">
     <button class="tgl" data-target="rec" data-more="Show all" data-less="Show top 12">Show all</button>
@@ -944,11 +1027,47 @@ def render_html(a, title):
   Averages use only the {n} complete month{'s' if n != 1 else ''} in the data; partial months
   are marked <code>*</code> in the sheet and left out of every average.
   Recurring charges are inferred from timing and price stability, so a genuinely regular
-  habit can look like a subscription — check the list before acting on it.</p>
-  <p>Generated locally by <code>analyze_finances.py</code>. Nothing left this machine.
+  habit can look like a subscription — check the list before acting on it.
+  Reconciliation compares the charges extracted from each statement against the purchase
+  total that statement prints for itself; the banner at the top of this page reports the
+  result rather than assuming it.</p>
+  <p>Generated locally by <code>analyze.py</code>. Nothing left this machine.
   Figures are arithmetic on your own statements, not financial advice.</p>
 </footer>
 </div><script>{JS}</script></body></html>"""
+
+
+def trust_markdown(a):
+    """The same verdict as the HTML banner, first thing in the file."""
+    v = trust_verdict(a)
+    cov = v["cov"]
+    mark = {"good": "VERIFIED", "warn": "UNVERIFIED", "bad": "DOES NOT RECONCILE"}[v["level"]]
+    L = [f"## Can these numbers be trusted? — {mark}", "", f"**{v['headline']}**", ""]
+    if cov["statements"]:
+        L += [f"- Statements: {cov['statements']} "
+              f"({cov['reconciled']} reconciled, {cov['mismatched']} mismatched, "
+              f"{cov['unchecked']} unchecked)",
+              f"- Unreconciled gap: {money(v['gap_total'], 2)}", ""]
+    for line in v["lines"]:
+        L += [line, ""]
+
+    if cov["mismatches"]:
+        L += ["### Statements that do not reconcile", "",
+              "| Statement | Period | Printed purchases | Charges extracted | Gap |",
+              "|---|---|---:|---:|---:|"]
+        for s in cov["mismatches"][:8]:
+            L.append(f"| {stmt_label(s)} | {s.statement_period or '—'} "
+                     f"| {money(s.purchases, 2) if s.purchases is not None else '—'} "
+                     f"| {money(s.charges_extracted, 2) if s.charges_extracted is not None else '—'} "
+                     f"| {money(abs(s.reconcile_diff or 0), 2)} |")
+        L.append("")
+
+    if v["gap_lines"]:
+        L += ["### Missing statement periods", "",
+              "Every total below is computed on incomplete data: spending in the periods "
+              "no statement covers is absent, not zero.", ""]
+        L += [f"- {g}" for g in v["gap_lines"]] + [""]
+    return L
 
 
 def render_markdown(a, title):
@@ -956,16 +1075,16 @@ def render_markdown(a, title):
     yr = 12.0 / n
     L = [f"# {title}", "",
          f"Period: {a['first']:%d %b %Y} – {a['last']:%d %b %Y} "
-         f"({n} complete months, {len(a['spend']):,} spending transactions)", "",
-         "## Summary", "",
-         f"- Average month: {money(a['monthly_avg'])}",
-         f"- Committed (recurring) per month: {money(a['committed'])}",
-         f"- Discretionary per month: {money(a['disc_total']/n)}",
-         f"- Interest and fees: {money(a['waste_total'])} "
-         f"({money(a['waste_total']*yr)}/yr at this rate)",
-         f"- Total spending: {money(a['total'])}", ""]
+         f"({n} complete months, {len(a['spend']):,} spending transactions)", ""]
+    L += trust_markdown(a)
+    L += ["## Summary", "", f"- Average month: {money(a['monthly_avg'])}"]
     if a["income"]:
-        L.insert(6, f"- Left over each month: {money(a['income'] - a['monthly_avg'])}")
+        L.append(f"- Left over each month: {money(a['income'] - a['monthly_avg'])}")
+    L += [f"- Committed (recurring) per month: {money(a['committed'])}",
+          f"- Discretionary per month: {money(a['disc_total']/n)}",
+          f"- Interest and fees: {money(a['waste_total'])} "
+          f"({money(a['waste_total']*yr)}/yr at this rate)",
+          f"- Total spending: {money(a['total'])}", ""]
 
     L += ["## Categories", "", "| Category | Total | Per month | Share | Charges |",
           "|---|---:|---:|---:|---:|"]
@@ -975,11 +1094,23 @@ def render_markdown(a, title):
                  f"| {a['cat_count'][c]} |")
 
     L += ["", "## Standing charges", ""]
+    today = a["today"]
     for r in a["recurring"][:25]:
-        flag = f"  (price up {r['price_pct']:.0f}%)" if r["price_pct"] > 4 else ""
-        L.append(f"- {r['name']} — {money(r['amount'],2)} {r['cadence']}, "
-                 f"{money(r['annual'])}/yr{flag}")
-    L += ["", f"Total standing charges: {money(sum(r['annual'] for r in a['recurring']))}/yr", ""]
+        flags = []
+        if abs(r.price_pct) > 4:
+            flags.append(f"price {r.price_pct:+.0f}%, {money(r.price_change, 2)} a time")
+        if r.is_stale(today):
+            flags.append(f"overdue, expected {r.next_expected:%d %b %Y}")
+        flag = f"  ({'; '.join(flags)})" if flags else ""
+        L.append(f"- {r.name} — {money(r.amount, 2)} {r.cadence}, "
+                 f"{money(r.per_year)}/yr{flag}")
+    L += ["", f"Total standing charges: "
+              f"{money(sum(r.per_year for r in a['recurring']))}/yr", ""]
+    stale_charges = [r for r in a["recurring"] if r.is_stale(today)]
+    if stale_charges:
+        verb = "is" if len(stale_charges) == 1 else "are"
+        L += [f"{len(stale_charges)} of these {verb} overdue: either cancelled, or the card "
+              f"on file died. Both are worth checking.", ""]
 
     L += ["## Top merchants", "", "| Merchant | Visits | Avg | Total |", "|---|---:|---:|---:|"]
     for m in a["merchants"][:20]:
@@ -1017,13 +1148,17 @@ def render_markdown(a, title):
 # --------------------------------------------------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(description="Analyze a cleaned statement CSV.")
-    ap.add_argument("csv", help="transactions.csv from parse_statements.py")
+    ap = argparse.ArgumentParser(
+        description="Build a spending dashboard from the finances store or a CSV.")
+    ap.add_argument("source", nargs="?", help=f"a .db store or a legacy transactions .csv "
+                                              f"(default {DEFAULT_DB})")
+    ap.add_argument("--db", default=DEFAULT_DB, help=f"SQLite store (default {DEFAULT_DB})")
     ap.add_argument("-o", "--output", default="finance_dashboard.html")
     ap.add_argument("--markdown", default="insights.md")
     ap.add_argument("--title", default="Where the money went")
-    ap.add_argument("--statements", help="statements.csv from parse_statements.py, "
-                                        "adds balances, APR, utilization and payoff math")
+    ap.add_argument("--statements", help="statements.csv, for a CSV input that has no "
+                                         "statements of its own; adds balances, APR, "
+                                         "utilization and payoff math")
     ap.add_argument("--income", type=float, help="monthly take-home pay, to show what's left over")
     ap.add_argument("--exclude-merchant", help="regex of merchants to drop entirely")
     ap.add_argument("--exclude-source", help="regex of source_file values to drop "
@@ -1040,20 +1175,30 @@ def main():
                         f"filesystem. Drop it: -o {target.lstrip('/')}") if target.startswith("/") else ""
                 sys.exit(f"Can't write to {target}: {e}{hint}")
 
-    txns = load(args.csv,
-                re.compile(args.exclude_merchant, re.I) if args.exclude_merchant else None,
-                re.compile(args.exclude_source, re.I) if args.exclude_source else None)
-    a = analyze(txns, args.income, load_statements(args.statements))
+    with open_engine(
+            args.source or args.db,
+            re.compile(args.exclude_merchant, re.I) if args.exclude_merchant else None,
+            re.compile(args.exclude_source, re.I) if args.exclude_source else None) as eng:
+        a = analyze(eng, args.income, load_statements(args.statements))
 
     with open(args.output, "w") as fh:
         fh.write(render_html(a, args.title))
     with open(args.markdown, "w") as fh:
         fh.write(render_markdown(a, args.title))
 
+    cov = a["coverage"]
     print(f"{len(a['spend']):,} spending transactions over {a['n_complete']} complete months")
     print(f"  average month     {money(a['monthly_avg'])}")
     print(f"  committed/month   {money(a['committed'])} across {len(a['recurring'])} standing charges")
     print(f"  interest and fees {money(a['waste_total'])}")
+    if cov["statements"]:
+        print(f"  reconciled        {cov['reconciled']}/{cov['statements']} statements "
+              f"({cov['pct']:.0f}%), {cov['mismatched']} mismatched, "
+              f"{cov['unchecked']} unchecked")
+    else:
+        print("  reconciled        no statements in this source — nothing is verified")
+    if cov["gaps"]:
+        print(f"  coverage gaps     {len(cov['gaps'])} — totals are computed on incomplete data")
     print(f"\nWrote {args.output} and {args.markdown}")
     print(f"Open it with:  open {args.output}   (or double-click)")
 

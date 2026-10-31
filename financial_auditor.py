@@ -5,18 +5,26 @@ financial_auditor.py — your strict grandfather goes through your statements.
 He is not impressed. He wants to know what each thing was for. If you can't
 tell him, he assumes it's fraud and tells you to call the bank.
 
-    python financial_auditor.py audit transactions.csv          # the reckoning
-    python financial_auditor.py audit transactions.csv -i       # he asks, you answer
-    python financial_auditor.py audit transactions.csv --clean  # no swearing
+    python financial_auditor.py audit                           # the reckoning
+    python financial_auditor.py audit -i                        # he asks, you answer
+    python financial_auditor.py audit --clean                   # no swearing
     python financial_auditor.py audit transactions.csv --report audit.md
 
     python financial_auditor.py use "Netflix"                   # log that you used it
     python financial_auditor.py usage                           # cost per use, verdicts
     python financial_auditor.py monitor --minutes 480           # watch what you open
+    python financial_auditor.py debt --statements               # what you owe, from the store
     python financial_auditor.py disputes                        # what to call the bank about
 
-Everything is stored locally in auditor_ledger.json. Answers persist, so he
-only asks about a charge once — but he remembers what you told him.
+Anywhere a file is asked for, he takes either the shared store (finances.db) or
+a legacy transactions CSV, and defaults to the store. Reading goes through
+engine.py so he is looking at exactly the same rows as the rest of the
+toolchain — including whether those rows reconcile against the statements they
+were printed on. He will not lecture you about coffee using numbers that do not
+add up.
+
+Everything he is told is stored locally in auditor_ledger.json. Answers persist,
+so he only asks about a charge once — but he remembers what you told him.
 
 Standard library only.
 """
@@ -41,6 +49,14 @@ try:
 except ImportError:
     _ESSENTIAL, _NON_SPEND = set(), set()
 
+# The shared read model and the shared helpers. There is one recurring-charge
+# detector for the whole toolchain and it lives in utils; this file used to keep
+# its own and they drifted apart.
+from engine import DEFAULT_DB, Engine  # noqa: E402
+from utils import (  # noqa: E402
+    detect_recurring, fmt_money as money, merchant_key, payoff_months,
+)
+
 # He does not get to be clever about these. Nobody needs a lecture for filling a
 # prescription or paying for childcare.
 OFF_LIMITS = ({"Health", "Pharmacy", "Childcare", "Insurance", "Education",
@@ -49,6 +65,13 @@ OFF_LIMITS = ({"Health", "Pharmacy", "Childcare", "Insurance", "Education",
               | _ESSENTIAL | _NON_SPEND)
 
 HABIT_CATEGORIES = {"Coffee", "Dining", "Delivery", "Alcohol/Bars"}
+
+# Things that repeat every month but that nobody signed up for and nobody can
+# cancel. They are not subscriptions and he does not talk about them as if they
+# were — the fees lecture is where they belong.
+NOT_A_SERVICE = re.compile(r"interest|late fee|annual fee|membership fee|rent|"
+                           r"mortgage|insurance|payment|electric|water|utility", re.I)
+
 COFFEE_RE = re.compile(r"coffee|starbucks|dunkin|bean|roast|cafe|caf\u00e9|espresso|"
                        r"peet|costa|tim horton|blue bottle|philz|brew", re.I)
 
@@ -104,10 +127,6 @@ class Grandpa:
         return salty_version if self.salty else clean_version
 
 
-def money(v, dp=0):
-    return f"${v:,.{dp}f}"
-
-
 def rule(width=74, ch="─"):
     return ch * width
 
@@ -150,42 +169,43 @@ def charge_id(t):
 # Data
 # --------------------------------------------------------------------------
 
-def merchant_key(name):
-    s = name.upper().strip()
-    if re.fullmatch(r"[A-Z]+_\d+", s) or s.startswith("OTHER ("):
-        return s
-    s = re.sub(r"[^A-Z0-9_ ]+", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    stop = {"POS", "PURCHASE", "RECURRING", "INC", "LLC", "CO", "THE", "USA", "US",
-            "COM", "STORE", "SQ", "TST", "PY"}
-    toks = []
-    for t in s.split():
-        if t in stop or len(t) < 2:
-            continue
-        if t.isdigit() and len(t) >= 3:
-            continue
-        if "_" not in t and len(t) >= 8 and sum(ch.isdigit() for ch in t) >= 2:
-            continue
-        toks.append(t)
-    return " ".join(toks[:3]) or s
+def open_source(path=DEFAULT_DB, required=True):
+    """The one way in. Takes the shared store or a legacy CSV, same as everyone.
+
+    ``required=False`` is for the commands where transactions only sharpen the
+    answer: they carry on without them rather than refusing to run.
+    """
+    if path and not os.path.exists(path):
+        if not required:
+            return None
+        sys.exit(f"No such file: {path}\n"
+                 f"Build the store first:  python parse.py PDFs --db {path}")
+    return Engine.from_source(path)
 
 
-def load(path):
-    with open(path, newline="") as fh:
-        rows = list(csv.DictReader(fh))
+def to_rows(txns):
+    """Transaction objects into the flat dicts the rest of this file talks in."""
     out = []
-    for r in rows:
-        try:
-            amt = float(r["amount"])
-            d = datetime.strptime(r["date"][:10], "%Y-%m-%d").date()
-        except (ValueError, KeyError):
+    for t in txns:
+        d = t.d
+        if d is None:
             continue
-        name = (r.get("merchant") or r.get("description") or "").strip()
-        out.append({"date": d.isoformat(), "d": d, "amount": amt, "merchant": name,
-                    "key": merchant_key(name), "category": r.get("category") or "Uncategorized",
-                    "card": r.get("issuer", "")})
-    if not out:
-        sys.exit("No usable rows. Expected columns: date, amount, merchant, category.")
+        name = (t.merchant or t.description or "").strip()
+        out.append({"date": d.isoformat(), "d": d, "amount": float(t.amount),
+                    "merchant": name, "key": merchant_key(name),
+                    "category": t.category or "Uncategorized", "card": t.issuer or ""})
+    return out
+
+
+def load(path=DEFAULT_DB, required=True):
+    """Every row in the source, as flat dicts. Closes the store behind itself."""
+    eng = open_source(path, required)
+    if eng is None:
+        return []
+    with eng:
+        out = to_rows(eng.transactions)
+    if not out and required:
+        sys.exit(f"No usable rows in {path}. I need a date, an amount and a merchant.")
     return out
 
 
@@ -194,59 +214,16 @@ def months_covered(txns):
     return max(len(ms), 1)
 
 
-def detect_recurring(spend):
-    by = defaultdict(list)
-    for t in spend:
-        by[t["key"]].append(t)
-    out = []
-    PER_YEAR = {"weekly": 52, "biweekly": 26, "monthly": 12,
-                "quarterly": 4, "semiannual": 2, "annual": 1}
-    for k, ts in by.items():
-        if len(ts) < 3:
-            continue
-        ds = sorted(t["d"] for t in ts)
-        if (ds[-1] - ds[0]).days < 50:
-            continue
-        amts = [t["amount"] for t in ts]
-        med = stats.median(amts)
-        spread = stats.median([abs(a - med) for a in amts])
-        if med <= 0 or spread / med > 0.25:
-            continue
+def old_price(r):
+    """What a recurring charge used to cost, before the price crept up.
 
-        gaps = [(ds[i + 1] - ds[i]).days for i in range(len(ds) - 1)]
-        gaps = [g for g in gaps if g > 0]
-        if not gaps:
-            continue
-        med_gap = stats.median(gaps)
-
-        # Subscriptions bill once a calendar month, but the day drifts — a card
-        # reissue, a weekend, a billing-date change. Counting months is far more
-        # reliable than measuring day gaps.
-        months_hit = sorted({t["d"].strftime("%Y-%m") for t in ts})
-        span_months = ((ds[-1].year - ds[0].year) * 12 + ds[-1].month - ds[0].month) + 1
-        monthly_like = (len(months_hit) >= 3
-                        and len(months_hit) >= span_months * 0.7
-                        and len(ts) <= len(months_hit) * 1.4)
-
-        if monthly_like:
-            cadence = "monthly"
-        elif 6 <= med_gap <= 400:
-            gap_spread = stats.median([abs(g - med_gap) for g in gaps])
-            if gap_spread / med_gap > 0.35:
-                continue
-            cadence = ("weekly" if med_gap <= 9 else "biweekly" if med_gap <= 18 else
-                       "monthly" if med_gap <= 45 else "quarterly" if med_gap <= 115 else
-                       "semiannual" if med_gap <= 200 else "annual")
-        else:
-            continue
-
-        per_year = med * PER_YEAR[cadence]
-        out.append({"key": k, "name": Counter(t["merchant"] for t in ts).most_common(1)[0][0],
-                    "amount": med, "per_year": per_year, "per_month": per_year / 12,
-                    "n": len(ts), "last": ds[-1], "first": ds[0],
-                    "category": Counter(t["category"] for t in ts).most_common(1)[0][0],
-                    "cadence": cadence})
-    return sorted(out, key=lambda r: -r["per_year"])
+    ``Recurring`` reports the drift as an absolute change and a percentage, which
+    is enough to recover both ends of it exactly.
+    """
+    if not r.price_pct:
+        return None, None
+    early = r.price_change / (r.price_pct / 100.0)
+    return early, early + r.price_change
 
 
 def classify(name):
@@ -268,7 +245,7 @@ def find_questions(spend, recurring, led, months):
     for t in spend:
         by_key[t["key"]].append(t)
 
-    rec_keys = {r["key"] for r in recurring}
+    rec_keys = {r.key for r in recurring}
     amounts = sorted(t["amount"] for t in spend)
     if not amounts:
         return qs
@@ -291,9 +268,9 @@ def find_questions(spend, recurring, led, months):
                                f"({money(med, 2)})")
         # a recurring charge that changed price
         if t["key"] in rec_keys and t["category"] != "Fees/Interest":
-            r = next(r for r in recurring if r["key"] == t["key"])
-            if t["amount"] > r["amount"] * 1.25 and t["amount"] - r["amount"] > 5:
-                reasons.append(f"this subscription normally costs {money(r['amount'], 2)}")
+            r = next(r for r in recurring if r.key == t["key"])
+            if t["amount"] > r.amount * 1.25 and t["amount"] - r.amount > 5:
+                reasons.append(f"this subscription normally costs {money(r.amount, 2)}")
         if reasons:
             qs.append({"id": cid, "t": t, "why": reasons[0], "amount": t["amount"]})
 
@@ -385,18 +362,18 @@ def lecture_pro_tools(g, recurring):
     """Expensive software. He wants to see the return."""
     out = []
     for r in recurring:
-        kind = classify(r["name"])
+        kind = classify(r.name)
         if kind not in ("ai", "dev", "creative"):
             continue
-        if r["per_month"] < 25:
+        if r.per_month < 25:
             continue
-        out.append(f"  {g.bold(r['name'])} — {money(r['amount'], 2)} {r['cadence']}, "
-                   f"{g.red(money(r['per_year']))} a year")
-        target = r["per_year"] * 5
+        out.append(f"  {g.bold(r.name)} — {money(r.amount, 2)} {r.cadence}, "
+                   f"{g.red(money(r.per_year))} a year")
+        target = r.per_year * 5
         out.append(f"    So you're generating {g.bold(money(target))} a year with it, then?")
-        out.append(f"    A tool that costs {money(r['per_month'])} a month needs to earn its keep.")
+        out.append(f"    A tool that costs {money(r.per_month)} a month needs to earn its keep.")
         out.append(f"    Break-even at $60/hour: it has to save you "
-                   f"{r['per_month'] / 60:.1f} hours a month. Does it?")
+                   f"{r.per_month / 60:.1f} hours a month. Does it?")
         out.append(g.dim("    If yes, it's cheap and stop reading. If you can't answer, "
                          "that's your answer."))
         out.append("")
@@ -408,7 +385,7 @@ def lecture_streaming(g, recurring, led, months):
     out = []
     groups = defaultdict(list)
     for r in recurring:
-        kind = classify(r["name"])
+        kind = classify(r.name)
         if kind in ("streaming", "music", "gaming", "news"):
             groups[kind].append(r)
 
@@ -416,19 +393,21 @@ def lecture_streaming(g, recurring, led, months):
     for kind, items in groups.items():
         if len(items) < 2:
             continue
-        total_year = sum(i["per_year"] for i in items)
+        total_year = sum(i.per_year for i in items)
         out.append(f"  {g.bold(str(len(items)) + ' ' + kind + ' services')} — "
                    f"{g.red(money(total_year))} a year, {money(total_year / 12)} a month")
         for i in items:
-            used = usage.get(i["name"].lower(), 0)
+            used = usage.get(i.name.lower(), 0)
             note = (g.dim("  (no usage logged)") if used == 0 else
                     g.dim(f"  ({used} uses logged)"))
-            out.append(f"    · {i['name']:<28} {money(i['per_year']):>9}/yr{note}")
+            if i.price_pct >= 5:
+                note += g.amber(f"  (price up {i.price_pct:.0f}%)")
+            out.append(f"    · {i.name:<28} {money(i.per_year):>9}/yr{note}")
         out.append("")
         if kind == "streaming":
             out.append("    How many of these are you actually watching? You have one set of eyes.")
-            cheapest = min(items, key=lambda i: i["per_year"])
-            saving = total_year - cheapest["per_year"]
+            cheapest = min(items, key=lambda i: i.per_year)
+            saving = total_year - cheapest.per_year
             out.append(f"    Keep one at a time and rotate. Same shows, "
                        f"{g.green(money(saving))} a year back.")
         elif kind == "music":
@@ -444,15 +423,177 @@ def lecture_streaming(g, recurring, led, months):
 
 
 def lecture_zombies(g, recurring, last_date):
+    """Standing charges that have missed their next date.
+
+    Not a guess about how long ago something last billed: the detector knows the
+    cadence, so it knows when the next charge was due and whether it turned up.
+    """
     out = []
     for r in recurring:
-        gap = (last_date - r["last"]).days
-        if r["cadence"] == "monthly" and 40 < gap < 400:
-            out.append(f"  {g.bold(r['name'])} — last charged {r['last']}, "
-                       f"{gap} days ago, was {money(r['amount'], 2)} a month")
-            out.append("    Either you cancelled it and forgot, or it's about to come back. "
-                       "Check.")
-            out.append("")
+        if not r.is_stale(last_date) or not r.next_expected:
+            continue
+        if r.category == "Fees/Interest" or NOT_A_SERVICE.search(r.name):
+            continue                      # an interest charge stopping is good news
+        overdue = (last_date - r.next_expected).days
+        if overdue > 400:
+            continue                      # too cold to be worth chasing
+        out.append(f"  {g.bold(r.name)} — last charged {r.last_seen}, "
+                   f"{money(r.amount, 2)} {r.cadence}. The next one was due "
+                   f"{r.next_expected} and never came.")
+        out.append(f"    {overdue} days overdue. Either you cancelled it and forgot, or the "
+                   f"card they had")
+        out.append("    expired and they are still trying. It comes back the day you replace "
+                   "the card.")
+        out.append(f"    If it really is gone, that is {g.green(money(r.per_year))} a year you "
+                   f"already stopped paying.")
+        out.append("")
+    return out
+
+
+def lecture_price_rises(g, recurring, led, months):
+    """Standing charges that quietly went up while you weren't looking.
+
+    The detector compares what a charge cost at the start against what it costs
+    now, so a subscription that crept from $15.49 to $18.49 is a fact rather than
+    a feeling. He treats a price rise and a rising interest bill differently:
+    one you can cancel, the other you can only pay off.
+    """
+    out = []
+    usage = usage_counts(led, 90)
+    risers, interest = [], []
+    for r in recurring:
+        if r.category in OFF_LIMITS and classify(r.name) is None:
+            continue                      # he does not lecture about the rent
+        was, now = old_price(r)
+        if was is None or r.price_pct < 5 or r.price_change < 0.75:
+            continue
+        if r.category == "Fees/Interest" or NOT_A_SERVICE.search(r.name):
+            interest.append((r, was, now))
+        else:
+            risers.append((r, was, now))
+    if not risers and not interest:
+        return out
+
+    def extra_a_year(r):
+        return r.price_change * (r.per_year / r.amount)
+
+    risers.sort(key=lambda x: -extra_a_year(x[0]))
+    extra_total = 0.0
+    for r, was, now in risers[:6]:
+        extra = extra_a_year(r)
+        extra_total += extra
+        out.append(f"  {g.bold(r.name)} — was {money(was, 2)}, now {money(now, 2)}. "
+                   f"Up {g.red(f'{r.price_pct:.0f}%')}.")
+        out.append(f"    Nobody wrote and asked you. They put it up and you paid it, "
+                   f"{r.n} times without a word.")
+        out.append(f"    The rise on its own is {g.red(money(extra))} a year. The whole thing "
+                   f"is {money(r.per_year)} a year.")
+        used = usage.get(r.name.lower(), 0)
+        if used:
+            out.append(f"    You logged {used} use(s) in three months — "
+                       f"{money(r.per_month * 3.0 / used, 2)} every time you opened it, "
+                       f"at the new price.")
+        else:
+            out.append("    You have not logged using it once. They put up the price of "
+                       "something you don't use.")
+        out.append(f"    Another year of not cancelling is {g.red(money(r.per_year))}, and "
+                   f"then they'll do it again.")
+        out.append("")
+
+    if extra_total > 0:
+        out.append(f"  {g.bold(money(extra_total) + ' a year')} of that is pure price rise — "
+                   f"the same thing you already had, for more money.")
+        out.append("    Ring them and say you're leaving. Half of them have a cheaper plan "
+                   "they only mention")
+        out.append("    when you say the word cancel. " + g.swear(
+            "The other half you should bloody well cancel.",
+            "The other half you should actually cancel."))
+        out.append("")
+
+    for r, was, now in interest[:2]:
+        out.append(f"  {g.bold(r.name)} — was {money(was, 2)} a month, now "
+                   f"{money(now, 2)}. Up {g.red(f'{r.price_pct:.0f}%')}.")
+        out.append("    Nobody raised that rate on you. It went up because the balance it is "
+                   "charged on went up.")
+        out.append(f"    That is what compounding looks like from the inside: "
+                   f"{money(r.per_year)} a year and climbing,")
+        out.append("    for nothing, on money you already spent. It is the one standing "
+                   "charge you cannot")
+        out.append("    cancel — you can only pay off what it feeds on.")
+        out.append("")
+    return out
+
+
+def coverage_bits(cov):
+    """The one-line summary of what is wrong with the paperwork."""
+    n = cov["statements"]
+    bits = []
+    if cov["mismatched"]:
+        bits.append(f"{cov['mismatched']} of {n} statements do not reconcile")
+    if cov["gaps"]:
+        bits.append(f"{len(cov['gaps'])} month(s) missing from the record")
+    if cov["unchecked"]:
+        bits.append(f"{cov['unchecked']} of {n} printed no total I could check against")
+    return bits
+
+
+def lecture_coverage(g, cov):
+    """Whether the statements add up before he says a word about spending.
+
+    A total is only worth as much as the paperwork behind it. If the charges we
+    pulled out of a statement disagree with the total printed on that same
+    statement, one of the two is wrong and he is not going to pretend otherwise.
+    """
+    out = []
+    n = cov["statements"]
+    if not n:
+        return [g.dim("  No statements on record, so I am taking these transactions on "
+                      "trust."),
+                g.dim("  I do not like taking things on trust. Parse the PDFs into the "
+                      "store and I can check"),
+                g.dim("  them against the totals the bank printed:  "
+                      "python parse.py PDFs --db finances.db")]
+
+    bad, gaps = cov["mismatches"], cov["gaps"]
+    if cov["trusted"]:
+        out.append(f"  {g.green(f'All {n} statements add up.')} Every charge I have matches "
+                   f"the total the bank")
+        out.append("  printed on the same page, and no month is missing. Now we can argue "
+                   "about the money.")
+        out.append("")
+        return out
+
+    out.append(f"  {n} statements. {g.green(str(cov['reconciled']) + ' add up')}, "
+               f"{g.red(str(cov['mismatched']) + ' do not')}, "
+               f"{cov['unchecked']} I could not check at all.")
+    out.append("")
+    for s in bad[:5]:
+        diff = s.reconcile_diff or 0.0
+        where = f"{s.issuer} ····{s.account_last4}".strip()
+        when = s.period_end or s.statement_period or s.source_file
+        out.append(f"    {where:<22} {when:<12} off by {g.red(money(abs(diff), 2))}"
+                   f"{g.dim('  ' + s.reconcile_note if s.reconcile_note else '')}")
+    if bad:
+        out.append("")
+        out.append("    The charges I can see do not add up to the total the bank printed on "
+                   "the same")
+        out.append("    page. One of those two is wrong. Until you know which, every number "
+                   "below is an")
+        out.append("    estimate, and I do not budget on estimates.")
+        out.append("")
+    for gap in gaps[:4]:
+        out.append(f"    {g.amber('Missing:')} {gap['account']} — nothing between "
+                   f"{gap['after']} and {gap['before']}. {gap['days']} days.")
+    if gaps:
+        out.append("")
+        out.append("    Money moved in that gap and I cannot see any of it. Find the "
+                   "statement.")
+        out.append("")
+    if cov["unchecked"]:
+        out.append(f"    {cov['unchecked']} statement(s) did not print a total I could check "
+                   f"against. Not your fault,")
+        out.append("    but not proof either.")
+        out.append("")
     return out
 
 
@@ -535,41 +676,82 @@ INSTALMENT_RE = re.compile(
 # Debt
 # --------------------------------------------------------------------------
 
-def import_statements(led, path):
-    """Pull balance snapshots out of statements.csv from parse_statements.py."""
+def _num(v):
+    try:
+        return float(v) if v not in ("", None) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _snapshot(fields, card, when, source):
+    """One statement, in the shape the debt picture reads."""
+    return {
+        "card": card, "date": when,
+        "balance": _num(fields.get("new_balance")),
+        "previous": _num(fields.get("previous_balance")),
+        "limit": _num(fields.get("credit_limit")),
+        "apr": _num(fields.get("purchase_apr")),
+        "minimum": _num(fields.get("minimum_payment")),
+        "interest": _num(fields.get("interest_charged")) or 0.0,
+        "fees": _num(fields.get("fees_charged")) or 0.0,
+        "payments": abs(_num(fields.get("payments")) or 0.0),
+        "purchases": _num(fields.get("purchases")) or 0.0,
+        "source": source,
+    }
+
+
+def import_statements(led, path=DEFAULT_DB):
+    """Pull balance snapshots out of the store, or out of a legacy statements CSV.
+
+    parse.py already reads every balance, limit, APR and interest charge off the
+    PDFs and keeps them. Typing them back in by hand was always absurd, so the
+    default source is the store itself and `debt --statements` is enough.
+    """
     if not os.path.exists(path):
         sys.exit(f"No such file: {path}")
-
-    def num(r, k):
-        v = r.get(k, "")
-        try:
-            return float(v) if v not in ("", None) else None
-        except ValueError:
-            return None
 
     snaps = led.setdefault("debt", {}).setdefault("snapshots", [])
     have = {(s["card"], s["date"]) for s in snaps}
     added = 0
-    with open(path, newline="") as fh:
-        for r in csv.DictReader(fh):
-            card = f"{r.get('issuer', '?')} ····{r.get('account_last4', '????')}"
-            m = re.search(r"(\d{4}-\d{2}-\d{2})\s*$", r.get("statement_period", "") or "")
-            when = m.group(1) if m else ""
-            if not when or (card, when) in have:
-                continue
-            snaps.append({
-                "card": card, "date": when,
-                "balance": num(r, "new_balance"), "previous": num(r, "previous_balance"),
-                "limit": num(r, "credit_limit"), "apr": num(r, "purchase_apr"),
-                "minimum": num(r, "minimum_payment"),
-                "interest": num(r, "interest_charged") or 0.0,
-                "fees": num(r, "fees_charged") or 0.0,
-                "payments": abs(num(r, "payments") or 0.0),
-                "purchases": num(r, "purchases") or 0.0,
-                "source": "statements.csv",
-            })
-            have.add((card, when))
-            added += 1
+    rows = []                             # (fields dict, card, date, source)
+
+    if path.lower().endswith(".csv"):
+        with open(path, newline="") as fh:
+            for r in csv.DictReader(fh):
+                card = f"{r.get('issuer') or '?'} ····{r.get('account_last4') or '????'}"
+                m = re.search(r"(\d{4}-\d{2}-\d{2})\s*$", r.get("statement_period", "") or "")
+                rows.append((r, card, m.group(1) if m else "", os.path.basename(path)))
+    else:
+        with open_source(path) as eng:
+            # A statement is dated by the day its period closed. Some issuers do
+            # not print the period at all, in which case the last transaction on
+            # that statement is the closest honest answer.
+            last_txn = {}
+            for t in eng.transactions:
+                if t.source_file and t.d:
+                    prev = last_txn.get(t.source_file)
+                    last_txn[t.source_file] = max(prev, t.d) if prev else t.d
+            for s in eng.statements():
+                card = f"{s.issuer or '?'} ····{s.account_last4 or '????'}"
+                when = s.period_end[:10] if s.period_end else ""
+                if not when:
+                    m = re.search(r"(\d{4}-\d{2}-\d{2})\s*$", s.statement_period or "")
+                    when = m.group(1) if m else ""
+                if not when and s.source_file in last_txn:
+                    when = last_txn[s.source_file].isoformat()
+                fields = {f: getattr(s, f, None) for f in
+                          ("new_balance", "previous_balance", "credit_limit", "purchase_apr",
+                           "minimum_payment", "interest_charged", "fees_charged", "payments",
+                           "purchases")}
+                rows.append((fields, card, when, os.path.basename(path)))
+
+    for fields, card, when, source in rows:
+        if not when or (card, when) in have:
+            continue
+        snaps.append(_snapshot(fields, card, when, source))
+        have.add((card, when))
+        added += 1
+
     snaps.sort(key=lambda s: (s["card"], s["date"]))
     return added
 
@@ -638,16 +820,6 @@ def debt_picture(led):
         })
     cards.sort(key=lambda c: -(c["apr"] or 0))
     return cards
-
-
-def payoff_months(balance, apr, payment):
-    if not balance or not apr or not payment or payment <= 0:
-        return None
-    import math
-    r = apr / 100.0 / 12.0
-    if payment <= balance * r + 0.01:
-        return None
-    return math.log(payment / (payment - balance * r)) / math.log(1 + r)
 
 
 def lecture_debt(g, led, spend, months):
@@ -795,15 +967,21 @@ def cmd_debt(args):
         print("Add one every month and I can tell you whether it's actually moving.")
         return
 
+    untrusted = None
     if args.statements:
         n = import_statements(led, args.statements)
         save_ledger(led, args.ledger)
-        print(f"Imported {n} new statement snapshot(s).")
+        print(f"Imported {n} new statement snapshot(s) from {args.statements}.")
+        if not args.statements.lower().endswith(".csv"):
+            with open_source(args.statements) as eng:
+                cov = eng.coverage()
+            if cov["statements"] and not cov["trusted"]:
+                untrusted = cov
 
     cards = debt_picture(led)
     if not cards:
         print("No debt on record yet. Give me something to work with:\n"
-              "  financial_auditor.py debt --statements cleanedData/statements.csv\n"
+              "  financial_auditor.py debt --statements\n"
               "  financial_auditor.py debt add --card \"Chase 4821\" --balance 4200 "
               "--limit 9000 --apr 21.49 --min 85")
         return
@@ -811,9 +989,16 @@ def cmd_debt(args):
     total = sum(c["balance"] for c in cards if c["balance"] > 1)
     print(header(g, "WHAT YOU OWE", f"{len(cards)} account(s) · {money(total)} outstanding"))
     print()
+    if untrusted:
+        print(f"  {g.amber('Before the balances:')} "
+              f"{', and '.join(coverage_bits(untrusted))}.")
+        print("  I am reading these balances off those same statements. Take the figures "
+              "below as the")
+        print("  shape of the problem, not the last word on it.")
+        print()
     spend = []
     if args.csv:
-        txns = load(args.csv)
+        txns = load(args.csv, required=False)
         spend = [t for t in txns if t["amount"] > 0
                  and t["category"] not in ("Payment", "Credits/Refunds", "Transfers/Cash")]
     print("\n".join(lecture_debt(g, led, spend, max(months_covered(spend), 1) if spend else 1)))
@@ -863,14 +1048,17 @@ def cmd_usage(args):
         return
 
     subs = led.get("decisions", {}).get("subscriptions", {})
-    if args.csv:
-        txns = load(args.csv)
+    txns = load(args.csv, required=False) if args.csv else []
+    if txns:
         spend = [t for t in txns if t["amount"] > 0]
         USABLE = {"Subscriptions", "Software/Tools", "Fitness", "Entertainment", "Gaming"}
         for r in detect_recurring(spend):
-            if classify(r["name"]) is None and r["category"] not in USABLE:
+            if classify(r.name) is None and r.category not in USABLE:
                 continue          # rent and interest are not things you "use"
-            subs.setdefault(r["name"], {"per_month": round(r["per_month"], 2)})
+            entry = subs.setdefault(r.name, {})
+            entry["per_month"] = round(r.per_month, 2)
+            if r.price_pct >= 5:
+                entry["price_pct"] = round(r.price_pct, 1)
         led.setdefault("decisions", {})["subscriptions"] = subs
         save_ledger(led, args.ledger)
 
@@ -879,8 +1067,6 @@ def cmd_usage(args):
     print(f"\n  {'service':<26}{'uses':>6}{'cost/mo':>10}{'cost/use':>11}  verdict")
     print("  " + rule(70))
 
-    NOT_A_SERVICE = re.compile(r"interest|late fee|annual fee|membership fee|rent|"
-                               r"mortgage|insurance|payment|electric|water|utility", re.I)
     subs = {k: v for k, v in subs.items() if not NOT_A_SERVICE.search(k)}
     led.setdefault("decisions", {})["subscriptions"] = subs
     save_ledger(led, args.ledger)
@@ -890,13 +1076,14 @@ def cmd_usage(args):
         uses = counts.get(name.lower(), 0)
         cost = meta.get("per_month", 0)
         per_use = cost / uses if uses else None
-        rows.append((name, uses, cost, per_use))
+        rows.append((name, uses, cost, per_use, meta.get("price_pct", 0)))
     for name, uses, cost in [(n, counts[n], 0) for n in counts
                              if n not in {s.lower() for s in subs}]:
-        rows.append((name.title(), uses, 0, None))
+        rows.append((name.title(), uses, 0, None, 0))
 
     total_waste = 0.0
-    for name, uses, cost, per_use in sorted(rows, key=lambda r: -(r[2] or 0)):
+    risen = 0.0
+    for name, uses, cost, per_use, rise in sorted(rows, key=lambda r: -(r[2] or 0)):
         if per_use is None and cost:
             verdict, colour = "CANCEL — you never opened it", g.red
             total_waste += cost * 12
@@ -912,9 +1099,15 @@ def cmd_usage(args):
         else:
             verdict, colour = "worth every penny", g.green
         pu = money(per_use, 2) if per_use else "—"
+        if rise:
+            verdict += f", and it went up {rise:.0f}%"
+            risen += cost * 12 * (rise / (100.0 + rise))
         print(f"  {name[:25]:<26}{uses:>6}{money(cost, 2):>10}{pu:>11}  {colour(verdict)}")
 
     print()
+    if risen > 0:
+        print(f"  {g.amber(money(risen) + ' a year')} of that is money they added to the "
+              f"price after you signed up.")
     if total_waste > 0:
         print(f"  {g.red(g.bold(money(total_waste) + ' a year'))} is going to things you "
               f"barely open.")
@@ -986,7 +1179,7 @@ def _rule_change(args, kind, label):
     print(f"Noted. Anything matching {g.bold(key)} is {label} from now on.")
 
     if args.csv:
-        txns = load(args.csv)
+        txns = load(args.csv, required=False)
         hits = [t for t in txns if t["key"] == key and t["amount"] > 0]
         if hits:
             tot = sum(t["amount"] for t in hits)
@@ -1041,22 +1234,25 @@ def cmd_disputes(args):
 def cmd_audit(args):
     g = Grandpa(not args.clean, not args.no_color)
     led = load_ledger(args.ledger)
-    txns = load(args.csv)
+    with open_source(args.csv) as eng:
+        txns = to_rows(eng.transactions)
+        cov = eng.coverage()
+    if not txns:
+        sys.exit(f"No usable rows in {args.csv}. I need a date, an amount and a merchant.")
     skip = {"Payment", "Credits/Refunds", "Transfers/Cash", "Income"} | _NON_SPEND
     all_spend = [t for t in txns if t["amount"] > 0 and t["category"] not in skip]
     income = [t for t in all_spend if is_income(t, led)]
     ignored = [t for t in all_spend if is_ignored(t, led) and t not in income]
     spend = [t for t in all_spend if t not in income and t not in ignored]
     if not spend:
-        sys.exit("Every row is a payment or a transfer. Check the signs in your CSV.")
+        sys.exit("Every row is a payment or a transfer. Check the signs in your data.")
 
     months = months_covered(spend)
     last_date = max(t["d"] for t in spend)
     total = sum(t["amount"] for t in spend)
     per_month = total * 1.0 / months
     recurring = detect_recurring(spend)
-    committed = sum(r["per_month"] for r in recurring)
-    lines = []
+    committed = sum(r.per_month for r in recurring)
 
     print(header(g, "SIT DOWN. WE NEED TO TALK ABOUT YOUR SPENDING.",
                  f"{len(spend):,} charges · {months} months · {min(t['date'] for t in spend)}"
@@ -1077,10 +1273,19 @@ def cmd_audit(args):
         print(f"  {g.red(money(unc))} of it is filed under 'Uncategorized'. "
               f"That's {unc/total*100:.0f}%.")
         print("  You don't know where a fifth of your money went. We'll come back to that.")
+    if cov["statements"] and not cov["trusted"]:
+        print(f"  {g.red('And I do not entirely believe that total.')} Read the next section "
+              f"before the rest.")
 
     n = 0
 
-    # 1. interrogation
+    # Trust before anything else: he will not lecture off numbers that do not add up.
+    n += 1
+    print(section(g, n, "do these numbers add up"))
+    print()
+    print("\n".join(lecture_coverage(g, cov)))
+
+    # interrogation
     questions = find_questions(spend, recurring, led, months)
     if questions:
         n += 1
@@ -1138,6 +1343,7 @@ def cmd_audit(args):
         ("delivery", lecture_delivery(g, spend, months)),
         ("what you pay for tools", lecture_pro_tools(g, recurring)),
         ("how many screens do you have", lecture_streaming(g, recurring, led, months)),
+        ("the raise you gave them", lecture_price_rises(g, recurring, led, months)),
         ("subscriptions that stopped charging", lecture_zombies(g, recurring, last_date)),
         ("money for nothing", lecture_fees(g, spend, months)),
         ("what you owe", lecture_debt(g, led, spend, months)),
@@ -1159,8 +1365,11 @@ def cmd_audit(args):
     if fees_year > 50:
         todo.append(f"Stop paying {money(fees_year)}/yr in interest and fees. "
                     f"Pay the full balance, not the minimum.")
-    subs_year = sum(r["per_year"] for r in recurring
-                    if classify(r["name"]) in ("streaming", "music", "gaming", "news"))
+    if cov["statements"] and not cov["trusted"]:
+        todo.insert(0, "Fix the paperwork first: " + ", ".join(coverage_bits(cov))
+                    + ". Every figure above is only as good as that.")
+    subs_year = sum(r.per_year for r in recurring
+                    if classify(r.name) in ("streaming", "music", "gaming", "news"))
     if subs_year > 100:
         todo.append(f"Log what you actually use for two weeks "
                     f"(`use \"Netflix\"`), then cancel what's left. "
@@ -1176,7 +1385,7 @@ def cmd_audit(args):
                     f"dollar there first — it's the highest rate you're paying.")
     elif not debt_picture(led):
         todo.append("Give me your balances so I can tell you if the debt is actually "
-                    "going down: `debt --statements statements.csv`")
+                    "going down: `debt --statements`")
     if not todo:
         todo.append("Nothing egregious. Don't let it go to your head.")
     print()
@@ -1188,21 +1397,28 @@ def cmd_audit(args):
 
     if args.report:
         with open(args.report, "w") as fh:
-            plain = Grandpa(not args.clean, color=False)
             fh.write(f"# Audit — {date.today():%d %b %Y}\n\n")
+            fh.write(f"- Source: {args.csv}\n")
             fh.write(f"- Period: {min(t['date'] for t in spend)} to "
                      f"{max(t['date'] for t in spend)} ({months} months)\n")
             fh.write(f"- Total spend: {money(total)} ({money(per_month)}/month)\n")
             fh.write(f"- Committed monthly: {money(committed)}\n")
-            fh.write(f"- Charges needing explanation: {len(questions)}\n\n")
-            fh.write("## Charges to explain\n\n")
+            fh.write(f"- Charges needing explanation: {len(questions)}\n")
+            if cov["statements"]:
+                fh.write(f"- Statements reconciled: {cov['reconciled']}/"
+                         f"{cov['statements']} ({cov['pct']:.0f}%), "
+                         f"{len(cov['gaps'])} gap(s) in the record\n")
+            else:
+                fh.write("- Statements reconciled: none on record, nothing verified\n")
+            fh.write("\n## Charges to explain\n\n")
             for q in questions[:args.limit]:
                 fh.write(f"- {q['t']['date']}  {money(q['amount'], 2)}  "
                          f"{q['t']['merchant']} — {q['why']}\n")
             fh.write("\n## Standing charges\n\n")
             for r in recurring:
-                fh.write(f"- {r['name']}: {money(r['amount'], 2)} {r['cadence']}, "
-                         f"{money(r['per_year'])}/yr\n")
+                rise = f", up {r.price_pct:.0f}% since it started" if r.price_pct >= 5 else ""
+                fh.write(f"- {r.name}: {money(r.amount, 2)} {r.cadence}, "
+                         f"{money(r.per_year)}/yr{rise}\n")
             fh.write("\n## To do\n\n")
             for i, item in enumerate(todo, 1):
                 fh.write(f"{i}. {re.sub(chr(27) + r'.[0-9;]*m', '', item)}\n")
@@ -1217,35 +1433,55 @@ def main():
     ap.add_argument("--ledger", default=LEDGER)
     ap.add_argument("--clean", action="store_true", help="he keeps it polite")
     ap.add_argument("--no-color", action="store_true")
+
+    # The same three flags again, accepted after the subcommand as well, because
+    # that is where people type them. SUPPRESS keeps the subparser from
+    # overwriting a value already given before the subcommand.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--ledger", default=argparse.SUPPRESS)
+    common.add_argument("--clean", action="store_true", default=argparse.SUPPRESS,
+                        help="he keeps it polite")
+    common.add_argument("--no-color", action="store_true", default=argparse.SUPPRESS)
+
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    a = sub.add_parser("audit", help="go through the statements")
-    a.add_argument("csv")
+    def verb(name, help):
+        return sub.add_parser(name, help=help, parents=[common])
+
+    a = verb("audit", "go through the statements")
+    a.add_argument("csv", nargs="?", default=DEFAULT_DB,
+                   help=f"the store or a transactions CSV (default {DEFAULT_DB})")
     a.add_argument("-i", "--interactive", action="store_true",
                    help="he asks about each charge and remembers your answers")
     a.add_argument("--limit", type=int, default=15, help="how many charges to question")
     a.add_argument("--report", help="also write a markdown report")
     a.set_defaults(func=cmd_audit)
 
-    u = sub.add_parser("use", help="log that you used a subscription today")
+    u = verb("use", "log that you used a subscription today")
     u.add_argument("service")
     u.add_argument("--minutes", type=int)
     u.set_defaults(func=cmd_use)
 
-    g = sub.add_parser("usage", help="cost per use, and the verdict on each subscription")
-    g.add_argument("--csv", help="transactions CSV, to price the subscriptions")
+    g = verb("usage", "cost per use, and the verdict on each subscription")
+    g.add_argument("--csv", default=DEFAULT_DB,
+                   help=f"the store or a transactions CSV, to price the subscriptions "
+                        f"(default {DEFAULT_DB})")
     g.add_argument("--days", type=int, default=30)
     g.set_defaults(func=cmd_usage)
 
-    m = sub.add_parser("monitor", help="watch which apps you actually open")
+    m = verb("monitor", "watch which apps you actually open")
     m.add_argument("--minutes", type=int, default=480, help="how long to watch")
     m.add_argument("--every", type=int, default=60, help="seconds between checks")
     m.add_argument("--once", action="store_true", help="take one sample and exit")
     m.set_defaults(func=cmd_monitor)
 
-    b = sub.add_parser("debt", help="what you owe, and whether it is actually moving")
-    b.add_argument("--statements", help="statements.csv from parse_statements.py")
-    b.add_argument("--csv", help="transactions CSV, to spot instalment plans")
+    b = verb("debt", "what you owe, and whether it is actually moving")
+    b.add_argument("--statements", nargs="?", const=DEFAULT_DB,
+                   help=f"import balances from the store or a statements CSV "
+                        f"(bare flag means {DEFAULT_DB})")
+    b.add_argument("--csv", default=DEFAULT_DB,
+                   help=f"the store or a transactions CSV, to spot instalment plans "
+                        f"(default {DEFAULT_DB})")
     b.add_argument("add", nargs="?", help=argparse.SUPPRESS)
     b.add_argument("--card", help="e.g. \"Chase 4821\"")
     b.add_argument("--balance", type=float)
@@ -1258,22 +1494,24 @@ def main():
     b.add_argument("--date", help="statement date, defaults to today")
     b.set_defaults(func=cmd_debt)
 
-    inc = sub.add_parser("income", help="mark a merchant as money coming IN, not spending")
+    inc = verb("income", "mark a merchant as money coming IN, not spending")
     inc.add_argument("merchant")
-    inc.add_argument("--csv", help="transactions CSV, to show what this changes")
+    inc.add_argument("--csv", default=DEFAULT_DB,
+                     help=f"the store or a transactions CSV, to show what this changes "
+                          f"(default {DEFAULT_DB})")
     inc.add_argument("--undo", action="store_true")
     inc.set_defaults(func=cmd_income)
 
-    ig = sub.add_parser("ignore", help="leave a merchant out of the audit entirely")
+    ig = verb("ignore", "leave a merchant out of the audit entirely")
     ig.add_argument("merchant")
-    ig.add_argument("--csv")
+    ig.add_argument("--csv", default=DEFAULT_DB)
     ig.add_argument("--undo", action="store_true")
     ig.set_defaults(func=cmd_ignore)
 
-    r = sub.add_parser("rules", help="show what you've told me")
+    r = verb("rules", "show what you've told me")
     r.set_defaults(func=cmd_rules)
 
-    d = sub.add_parser("disputes", help="what to call the bank about")
+    d = verb("disputes", "what to call the bank about")
     d.set_defaults(func=cmd_disputes)
 
     args = ap.parse_args()

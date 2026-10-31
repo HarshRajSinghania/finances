@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+/*
+  Design tokens.
+
+  The chart colours are the validated data-viz palette, not free choices: the
+  categorical slots were checked for colour-vision separation and contrast
+  against these exact surfaces before being written down. Slots are assigned in
+  fixed order and never cycled. Status colours are reserved for state
+  (reconciled / mismatched / unchecked) and never reused as a series colour, so
+  a chart can never accidentally imply that "unverified" is just another series.
+*/
+
+@theme {
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  --color-plane: #f9f9f7;
+  --color-surface: #fcfcfb;
+  --color-raised: #ffffff;
+  --color-ink: #0b0b0b;
+  --color-ink-secondary: #52514e;
+  --color-ink-muted: #898781;
+  --color-hairline: #e1e0d9;
+  --color-baseline: #c3c2b7;
+
+  /* categorical series, fixed order, never cycled */
+  --color-series-1: #2a78d6;
+  --color-series-2: #eb6834;
+  --color-series-3: #1baf7a;
+  --color-series-4: #eda100;
+  --color-series-5: #e87ba4;
+
+  /* status — reserved, never a series */
+  --color-good: #0ca30c;
+  --color-warning: #fab219;
+  --color-serious: #ec835a;
+  --color-critical: #d03b3b;
+  --color-success-text: #006300;
+
+  --radius-card: 0.75rem;
+}
+
+/*
+  Dark values are chosen for the dark surface rather than flipped, and are
+  declared under both scopes: the media query follows the OS, the data-theme
+  scope follows the in-app toggle, which has to win in both directions.
+*/
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --color-plane: #0d0d0d;
+      --color-surface: #1a1a19;
+      --color-raised: #232322;
+      --color-ink: #ffffff;
+      --color-ink-secondary: #c3c2b7;
+      --color-ink-muted: #898781;
+      --color-hairline: #2c2c2a;
+      --color-baseline: #383835;
+      --color-series-1: #3987e5;
+      --color-series-2: #d95926;
+      --color-series-3: #199e70;
+      --color-series-4: #c98500;
+      --color-series-5: #d55181;
+      --color-success-text: #0ca30c;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --color-plane: #0d0d0d;
+    --color-surface: #1a1a19;
+    --color-raised: #232322;
+    --color-ink: #ffffff;
+    --color-ink-secondary: #c3c2b7;
+    --color-ink-muted: #898781;
+    --color-hairline: #2c2c2a;
+    --color-baseline: #383835;
+    --color-series-1: #3987e5;
+    --color-series-2: #d95926;
+    --color-series-3: #199e70;
+    --color-series-4: #c98500;
+    --color-series-5: #d55181;
+    --color-success-text: #0ca30c;
+  }
+
+  * {
+    border-color: var(--color-hairline);
+  }
+
+  html {
+    background-color: var(--color-plane);
+  }
+
+  body {
+    background-color: var(--color-plane);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-series-1) 22%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-series-1);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@layer utilities {
+  /* Money in a column has to line up; money in prose should not. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-card);
+  }
+
+  /* Wide content scrolls inside its own box; the page never scrolls sideways. */
+  .scroll-x {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+}

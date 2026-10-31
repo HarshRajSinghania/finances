@@ -8,3 +8,31 @@ merchant_cache.json
 insights.md
 .venv
 uv.lock
+.idea
+*.egg-info
+build
+dist
+
+# Web dashboard
+web/node_modules
+web/dist
+web/.vite
+*.tsbuildinfo
+
+# SQLite store (holds parsed financial data) + its WAL/SHM sidecars
+*.db
+*.db-wal
+*.db-shm
+__pycache__
+learned_rules.json
+auditor_ledger.json
+plan.json
+plan.html
+cashflow.html
+cpi.html
+backtest.html
+audit.md
+
+# Golden files record parser output for the bundled statements, which are
+# personal. The harness regenerates them with:  python tests/run.py --update-golden
+tests/golden/
