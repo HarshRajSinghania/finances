@@ -23,7 +23,9 @@ from contextlib import contextmanager
 
 from models import Statement, Transaction
 
-DEFAULT_DB = "finances.db"
+# FINANCES_DB lets a container, or a second store such as the demo, be chosen
+# once instead of with --db on every command.
+DEFAULT_DB = os.environ.get("FINANCES_DB") or "finances.db"
 
 # Transaction columns that together identify a unique charge (a statement
 # parsed twice produces the same key and is folded, not duplicated).

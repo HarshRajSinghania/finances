@@ -1,0 +1,44 @@
+# docker compose up                      your statements: ./PDFs in, dashboard on :8787
+# docker compose --profile demo up demo  made-up data, nothing of yours involved
+# docker compose run --rm finances check any finances command, same as outside
+#
+# Ports are published on 127.0.0.1 only: the dashboard is not reachable from
+# other machines on your network.
+
+services:
+  finances:
+    build: .
+    image: finances:local
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ./data:/data            # the store, learned rules, generated reports
+      - ./PDFs:/data/PDFs       # your statements, read-write so uploads land here
+    environment:
+      # For `finances ask` and `finances enrich`. Points at the ollama service
+      # below; on a Mac, Ollama running natively is much faster (Docker has no
+      # GPU there): use http://host.docker.internal:11434/v1 instead.
+      FINANCES_LLM_ENDPOINT: ${FINANCES_LLM_ENDPOINT:-http://ollama:11434/v1}
+    restart: unless-stopped
+
+  demo:
+    profiles: ["demo"]
+    image: finances:local
+    build: .
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      FINANCES_DB: /tmp/demo.db
+    # No volumes: the demo store lives and dies with the container.
+    command: ["sh", "-c", "finances demo --db /tmp/demo.db && exec finances web"]
+    entrypoint: []
+
+  ollama:
+    profiles: ["llm"]
+    image: ollama/ollama
+    volumes:
+      - ollama:/root/.ollama
+    # Not published to the host; only the finances container talks to it.
+
+volumes:
+  ollama:

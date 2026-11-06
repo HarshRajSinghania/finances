@@ -2,12 +2,15 @@
 *.txt
 cleanedData
 PDFs
+# docker compose keeps the store and reports here
+/data/
+# launch-video working files; the finished video lives in docs/
+/brag-output/
 anonymize_map.json
 finance_dashboard.html
 merchant_cache.json
 insights.md
 .venv
-uv.lock
 .idea
 *.egg-info
 build

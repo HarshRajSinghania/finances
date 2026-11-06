@@ -1,0 +1,13 @@
+# A whitelist, not a blacklist. This folder holds bank statements and a database
+# of every transaction in them; nothing gets into a build context unless it is
+# named here, so a new personal file can never be sent to the Docker daemon or
+# baked into an image by accident.
+*
+!*.py
+!pyproject.toml
+!uv.lock
+!docker/
+!web/
+web/node_modules
+web/dist
+web/.vite

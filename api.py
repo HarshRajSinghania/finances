@@ -54,9 +54,16 @@ from database import DEFAULT_DB, FinanceDB          # noqa: E402
 from engine import Engine, NON_SPEND                # noqa: E402
 from utils import merchant_key                      # noqa: E402
 
-PDF_DIR = os.path.join(HERE, "PDFs")
-WEB_DIST = os.path.join(HERE, "web", "dist")
+# Both overridable so a container (or anyone running from another directory)
+# can keep the code in one place and the data in another.
+PDF_DIR = os.environ.get("FINANCES_PDF_DIR") or os.path.join(HERE, "PDFs")
+WEB_DIST = os.environ.get("FINANCES_WEB_DIST") or os.path.join(HERE, "web", "dist")
 MAX_UPLOAD = 32 * 1024 * 1024          # a statement PDF is tens of KB; 32MB is generous
+
+# Names a browser may use to reach this server. Anything else in the Host header
+# is a DNS-rebinding attempt: a hostile page pointing its own domain at 127.0.0.1
+# to read the API as if it were same-origin.
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
 # One writer at a time. Parsing mutates the store, and two uploads landing
 # together would race on the same SQLite file.
@@ -365,12 +372,16 @@ class Api:
         with open(dest, "wb") as fh:
             fh.write(blob)
 
+        # Absolute paths, because the parser runs in its own process: a relative
+        # --db would otherwise resolve against wherever that process starts, and
+        # the upload would land in a different store from the one being served.
+        db_path = os.path.abspath(self.db_path)
+        csv_out = os.path.join(os.path.dirname(db_path), "cleanedData", "transactions.csv")
         with _parse_lock:
             proc = subprocess.run(
                 [sys.executable, os.path.join(HERE, "parse.py"), dest,
-                 "--db", self.db_path, "--no-csv" if False else "-o",
-                 os.path.join(HERE, "cleanedData", "transactions.csv"), "--force"],
-                capture_output=True, text=True, cwd=HERE,
+                 "--db", db_path, "-o", csv_out, "--force"],
+                capture_output=True, text=True,
             )
         ok = proc.returncode == 0
 
@@ -455,24 +466,28 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self._cors()
         self.end_headers()
         self.wfile.write(body)
 
-    def _cors(self):
-        # The dev server runs on another port. The socket is bound to localhost,
-        # so this opens nothing to the network.
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self._cors()
-        self.end_headers()
+    # No CORS headers, deliberately. The page is served from this origin and the
+    # Vite dev server proxies /api, so nothing legitimate is cross-origin — and
+    # "Access-Control-Allow-Origin: *" would let any website open in the same
+    # browser read every transaction from localhost.
+    def _refuse_foreign(self) -> bool:
+        """Answer 403 to a request that did not come from a local page."""
+        raw = (self.headers.get("Host") or "").lower()
+        host = raw[: raw.find("]") + 1] if raw.startswith("[") else raw.rsplit(":", 1)[0]
+        origin = self.headers.get("Origin")
+        origin_host = (urllib.parse.urlparse(origin).hostname or "") if origin else ""
+        if host not in LOCAL_HOSTS or (origin and origin_host not in LOCAL_HOSTS):
+            self._send_json({"error": "requests are accepted from localhost only"}, 403)
+            return True
+        return False
 
     # -- routes ----------------------------------------------------------
     def do_GET(self):
+        if self._refuse_foreign():
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         q = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
@@ -499,6 +514,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._serve_static(path)
 
     def do_POST(self):
+        if self._refuse_foreign():
+            return
         if urllib.parse.urlparse(self.path).path != "/api/upload":
             return self._send_json({"error": "not found"}, 404)
         try:
@@ -523,6 +540,8 @@ class Handler(BaseHTTPRequestHandler):
                                status)
 
     def do_DELETE(self):
+        if self._refuse_foreign():
+            return
         path = urllib.parse.urlparse(self.path).path
         if not path.startswith("/api/statements/"):
             return self._send_json({"error": "not found"}, 404)
@@ -538,8 +557,8 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.isdir(WEB_DIST):
             return self._send_json({
                 "error": "The web dashboard has not been built yet.",
-                "hint": "cd web && npm install && npm run build — "
-                        "or run 'npm run dev' for the dev server.",
+                "hint": "Install Node and restart `finances web` (it builds itself), "
+                        "run: cd web && npm ci && npm run build, or use Docker.",
             }, 503)
 
         rel = urllib.parse.unquote(path).lstrip("/") or "index.html"
@@ -565,17 +584,44 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def serve(db: str, port: int, open_browser: bool):
+def ensure_built() -> bool:
+    """Build the dashboard the first time, if it is missing and npm is here.
+
+    Otherwise ``finances web`` would answer every page with "not built", and
+    the person trying it has to discover a second toolchain to see anything.
+    """
+    if os.path.isdir(WEB_DIST):
+        return True
+    web = os.path.join(HERE, "web")
+    npm = shutil.which("npm")
+    if not npm or not os.path.exists(os.path.join(web, "package.json")):
+        return False
+    print("finances: building the web dashboard (first run only) ...")
+    steps = [] if os.path.isdir(os.path.join(web, "node_modules")) else [[npm, "ci"]]
+    for cmd in steps + [[npm, "run", "build"]]:
+        if subprocess.run(cmd, cwd=web).returncode != 0:
+            print(f"finances: '{' '.join(cmd[1:])}' failed; serving the API only.",
+                  file=sys.stderr)
+            return False
+    return os.path.isdir(WEB_DIST)
+
+
+def serve(db: str, port: int, open_browser: bool, host: str = "127.0.0.1"):
     Handler.api = Api(db)
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    httpd = ThreadingHTTPServer((host, port), Handler)
     url = f"http://localhost:{port}"
 
     built = os.path.isdir(WEB_DIST)
     print(f"finances api  {url}")
     print(f"  store       {db}"
-          f"{'' if os.path.exists(db) else '  (missing — run: python finances.py parse PDFs/)'}")
-    print(f"  dashboard   {'serving web/dist' if built else 'not built — run: cd web && npm run dev'}")
-    print("  bound to localhost only. Ctrl-C to stop.\n")
+          f"{'' if os.path.exists(db) else '  (missing — run: finances parse PDFs/, or finances demo)'}")
+    print(f"  dashboard   {'serving ' + WEB_DIST if built else 'not built — run: cd web && npm ci && npm run build'}")
+    if host in ("127.0.0.1", "localhost", "::1"):
+        print("  bound to localhost only. Ctrl-C to stop.\n")
+    else:
+        # Only sensible inside a container, where the port is published to the
+        # host's loopback. Requests still have to name localhost to be served.
+        print(f"  bound to {host}; requests are still accepted from localhost only.\n")
 
     if open_browser and built:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
@@ -588,10 +634,16 @@ def serve(db: str, port: int, open_browser: bool):
 def main():
     ap = argparse.ArgumentParser(description="JSON API over the finances store.")
     ap.add_argument("--db", default=DEFAULT_DB)
-    ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--port", type=int, default=int(os.environ.get("FINANCES_PORT", 8787)))
+    ap.add_argument("--host", default=os.environ.get("FINANCES_HOST", "127.0.0.1"),
+                    help="interface to bind (default 127.0.0.1; 0.0.0.0 only inside a container)")
     ap.add_argument("--open", action="store_true", help="open a browser once serving")
+    ap.add_argument("--no-build", action="store_true",
+                    help="do not build the dashboard if web/dist is missing")
     args = ap.parse_args()
-    serve(args.db, args.port, args.open)
+    if not args.no_build:
+        ensure_built()
+    serve(args.db, args.port, args.open, args.host)
 
 
 if __name__ == "__main__":

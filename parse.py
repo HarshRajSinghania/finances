@@ -62,7 +62,7 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import MONTHS, file_sha256, parse_date, parse_money  # noqa: E402
 from models import Statement, Transaction                        # noqa: E402
-from database import FinanceDB                                    # noqa: E402
+from database import DEFAULT_DB, FinanceDB                        # noqa: E402
 
 # The shared engine decides categories. If it isn't next to this script the
 # built-in rules below are used instead, so nothing hard-fails.
@@ -1252,8 +1252,8 @@ def main():
                     help="where to write per-statement summaries "
                          "(balances, interest, APR, credit limit)")
     ap.add_argument("--keep-duplicates", action="store_true")
-    ap.add_argument("--db", default="finances.db",
-                    help="SQLite store for parsed data + parse cache (default finances.db)")
+    ap.add_argument("--db", default=DEFAULT_DB,
+                    help=f"SQLite store for parsed data + parse cache (default {DEFAULT_DB})")
     ap.add_argument("--no-db", action="store_true",
                     help="don't read or write the SQLite store")
     ap.add_argument("--force", action="store_true",

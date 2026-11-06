@@ -715,6 +715,7 @@ def suggest_examples(question: str, n: int = 3) -> list[str]:
 # --------------------------------------------------------------------------
 
 def no_model_message(question: str | None, endpoint: str | None) -> str:
+    endpoint = endpoint or os.environ.get("FINANCES_LLM_ENDPOINT")
     checked = ([endpoint] if endpoint else
                [f"{u}  ({label})" for u, label in COMMON_ENDPOINTS])
     lines = ["No local model is running, so the question cannot be translated "

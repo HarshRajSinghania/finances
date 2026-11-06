@@ -7,6 +7,7 @@ its own idea of what to read. That is fine when you wrote them, and hostile when
 you did not: there was no way to discover what existed, and no stated order to
 run things in. This is the front door.
 
+    finances demo                made-up data to try everything on  -> demo.db
     finances parse PDFs          statements  -> finances.db
     finances web                 the dashboard, in a browser
     finances check               does the data agree with the statements?
@@ -39,6 +40,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+from database import DEFAULT_DB  # noqa: E402
+
 # subcommand -> (module, one-line help)
 COMMANDS: dict[str, tuple[str, str]] = {
     "parse":      ("parse", "extract transactions from statement PDFs into the store"),
@@ -55,6 +58,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "enrich":     ("llm_enrich", "clean up merchant names with a local LLM"),
     "engine":     ("engine", "the raw unified view over the store"),
     "web":        ("api", "serve the web dashboard on localhost"),
+    "demo":       ("demo", "write a year of made-up statements to demo.db, to try it out"),
     "pipeline":   ("", "parse, categorize and analyze in one run"),
 }
 
@@ -128,7 +132,7 @@ def cmd_check(argv: list[str]) -> int:
 
     ap = argparse.ArgumentParser(prog="finances check",
                                  description="Reconciliation and coverage report.")
-    ap.add_argument("--db", default="finances.db")
+    ap.add_argument("--db", default=DEFAULT_DB)
     ap.add_argument("--strict", action="store_true",
                     help="exit non-zero unless everything reconciles")
     args = ap.parse_args(argv)
@@ -190,7 +194,7 @@ def cmd_pipeline(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="finances pipeline",
                                  description="Run the whole chain over a folder of PDFs.")
     ap.add_argument("input", help="PDF file or folder")
-    ap.add_argument("--db", default="finances.db")
+    ap.add_argument("--db", default=DEFAULT_DB)
     ap.add_argument("--income", type=float, help="monthly take-home, passed to analyze")
     args = ap.parse_args(argv)
 

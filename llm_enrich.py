@@ -280,6 +280,9 @@ def http_json(url, payload=None, timeout=180):
 
 def discover(endpoint=None):
     """Find a running local server and every model it offers, with sizes."""
+    # Inside a container "localhost" is the container itself, so compose points
+    # this at the ollama service instead.
+    endpoint = endpoint or os.environ.get("FINANCES_LLM_ENDPOINT")
     tries = [(endpoint, "specified")] if endpoint else COMMON_ENDPOINTS
     for url, label in tries:
         base = url.rstrip("/")

@@ -4,12 +4,16 @@ Personal finance analysis that reads your statement PDFs directly. No bank
 login, no Plaid, no account linking, no cloud. Everything runs on your machine
 and nothing is uploaded anywhere.
 
+[![A 20-second tour of finances, on made-up demo data](docs/demo.jpg)](docs/demo.mp4)
+
+*20 seconds, on the made-up data from `finances demo`. Click to play.*
+
 The thing that makes it different: **a statement prints its own totals, so the
 extraction can be proved correct.** Every figure this produces traces back to a
 line on a statement, and the tool tells you when it cannot.
 
 ```
-$ python finances.py check
+$ finances check
 
 Store       finances.db
 Rows        1180 transactions, 2025-01-03 to 2025-12-29
@@ -30,106 +34,114 @@ reconciliation is enforced rather than assumed.
 
 # Running it
 
-## 1. Install
+Three ways in. Pick one; they all end at the same dashboard on
+`http://localhost:8787`.
 
-Requires **Python 3.14+**. One dependency, `pdfplumber`, used by the PDF parser
-alone — everything downstream is standard library.
+## Try it first, with made-up data
 
-```bash
-git clone <this repo>
-cd Finances
-
-uv sync                      # recommended
-# or:
-python3 -m venv .venv && .venv/bin/pip install pdfplumber
-```
-
-## 2. Put your statements somewhere
-
-Drop the PDFs your bank and card issuers give you into a folder. Any layout is
-fine — subfolders are searched too.
-
-```
-PDFs/
-  Amex-Jan_2025.pdf
-  chase-checking-jan.pdf
-  February Discover.pdf
-  ...
-```
-
-Tested against Amex, Chase (card and checking), Capital One and Discover.
-
-## 3. Run it
-
-Every command is `python finances.py <command>`. Use `.venv/bin/python` if you
-are not in an activated virtualenv.
+Nobody should have to hand over a year of bank statements to find out whether
+a tool is any good. `demo` writes twelve months of an invented checking account
+and credit card — paychecks, rent, a subscription that raises its price, a
+holiday spike — into a separate `demo.db`. It goes through the same
+reconciliation and categorizer as a real statement.
 
 ```bash
-.venv/bin/python finances.py pipeline PDFs/
+# with uv
+git clone https://github.com/roshanlam/finances && cd finances
+uv run finances demo
+uv run finances web --db demo.db --open
+
+# or with Docker, nothing else installed
+docker compose --profile demo up demo        # then open http://localhost:8787
 ```
 
-That single command parses the PDFs, categorizes the transactions, builds the
-dashboard, and prints the reconciliation report. It is the whole thing.
+## With your statements: uv
 
-If you would rather run the steps yourself:
+Requires [uv](https://docs.astral.sh/uv/) (it fetches Python 3.12+ if you do
+not have it). For the browser dashboard you also need Node 20+; without it
+everything in the terminal still works.
 
 ```bash
-.venv/bin/python finances.py parse PDFs/        # PDFs      -> finances.db
-.venv/bin/python finances.py categorize apply   # label the transactions
-.venv/bin/python finances.py check              # do the numbers add up?
-.venv/bin/python finances.py analyze            # -> finance_dashboard.html
+uv sync                                  # one dependency: pdfplumber
+mkdir -p PDFs                            # drop your statement PDFs in here
+uv run finances pipeline PDFs/           # parse, categorize, check, report
+uv run finances web --open               # builds the dashboard on first run
 ```
 
-**Always run `check` before trusting anything else.** If it does not say
-100%, the numbers downstream are built on a bad extraction and every other
-report will tell you so too.
+Any folder layout works — subfolders are searched too. Tested against Amex,
+Chase (card and checking), Capital One and Discover.
 
-## 4. Open the dashboard
+**Always look at the `check` verdict at the end before trusting anything
+else.** If it does not say 100%, the numbers downstream are built on a bad
+extraction, and every other report will tell you so too.
+
+## With your statements: Docker
 
 ```bash
-cd web && npm install && npm run build && cd ..
-.venv/bin/python finances.py web --open
+mkdir -p PDFs                            # drop your statement PDFs in here
+docker compose up                        # then open http://localhost:8787
 ```
 
-A browser dashboard on `http://localhost:8787` — your statements, the
-reconciliation verdict for each one, spending by month and category, detected
-subscriptions, and a searchable transaction table. **You can drag new statement
-PDFs straight onto it**: they are parsed on drop, and the reply tells you how
-many transactions came out and whether the file reconciles against its own
-printed totals.
-
-The server binds to localhost only and makes no outbound requests.
-
-While working on the frontend, run the two halves separately — `python api.py`
-in one terminal, `cd web && npm run dev` in another, then use
-`http://localhost:5173` (it proxies `/api` through).
-
-## 5. Or stay in the terminal
+On start the container parses whatever is in `./PDFs` (unchanged files are
+skipped), categorizes it, prints the `check` verdict and serves the dashboard.
+The store and every generated report land in `./data`. Every command works the
+same way inside it:
 
 ```bash
-.venv/bin/python finances.py analyze            # where the money went
-.venv/bin/python finances.py cashflow           # the next 60 days
-.venv/bin/python finances.py audit              # the reckoning
-.venv/bin/python finances.py cpi                # your own inflation rate
-.venv/bin/python finances.py backtest           # how accurate are the forecasts
-.venv/bin/python finances.py ask "how much did I spend on coffee in March"
+docker compose run --rm finances check
+docker compose run --rm finances cashflow
+docker compose run --rm finances ask --example top-merchants
 ```
 
-`python finances.py` on its own lists every command. `python finances.py
-<command> --help` shows that tool's own options.
+The port is published on `127.0.0.1` only, and `.dockerignore` is a whitelist:
+your PDFs and database are never sent to the Docker daemon or baked into an
+image.
 
-## Optional: the `finances` shortcut
+## The dashboard
 
-To type `finances` instead of `python finances.py`:
+Your statements, the reconciliation verdict for each one, spending by month and
+category, detected subscriptions, and a searchable transaction table. **You
+can drag new statement PDFs straight onto it**: they are parsed on drop, and
+the reply tells you how many transactions came out and whether the file
+reconciles against its own printed totals.
+
+The server makes no outbound requests, binds to localhost, and refuses any
+request that does not come from a page on localhost — so another website open
+in the same browser cannot read your transactions from it.
+
+While working on the frontend, run the two halves separately —
+`uv run finances web` in one terminal, `cd web && npm run dev` in another, then
+use `http://localhost:5173` (it proxies `/api` through).
+
+## Or stay in the terminal
 
 ```bash
-uv sync                      # installs the console script
-# or:
-.venv/bin/pip install -e .
+uv run finances analyze            # where the money went
+uv run finances cashflow           # the next 60 days
+uv run finances audit              # the reckoning
+uv run finances cpi                # your own inflation rate
+uv run finances backtest           # how accurate are the forecasts
+uv run finances ask "how much did I spend on coffee in March"
 ```
 
-Then `finances check`, `finances analyze`, and so on. Every example below uses
-the long form so it works whether or not you have done this.
+`uv run finances` on its own lists every command; `uv run finances <command>
+--help` shows that tool's own options. Inside an activated virtualenv
+(`source .venv/bin/activate`), drop the `uv run`. Without uv at all:
+`python3 -m venv .venv && .venv/bin/pip install -e .` and then
+`.venv/bin/finances`.
+
+## Configuration
+
+Everything is a flag, and the few things you would otherwise repeat on every
+command are also environment variables:
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `FINANCES_DB` | `finances.db` | the store every command reads and writes |
+| `FINANCES_PDF_DIR` | `PDFs/` next to the code | where dashboard uploads are saved |
+| `FINANCES_HOST` / `FINANCES_PORT` | `127.0.0.1` / `8787` | where `finances web` listens |
+| `FINANCES_LLM_ENDPOINT` | Ollama, LM Studio, llama.cpp on localhost | the model server for `ask` and `enrich` |
+| `FINANCES_WEB_DIST` | `web/dist` | a prebuilt dashboard to serve |
 
 ---
 
@@ -150,35 +162,36 @@ the long form so it works whether or not you have done this.
 | `anonymize` | a copy safe to share | `transactions_shareable.csv` |
 | `enrich` | local-LLM merchant cleanup | `finances.db` |
 | `web` | serve the browser dashboard, with PDF drag-and-drop | — |
+| `demo` | a year of made-up statements, to try everything on | `demo.db` |
 | `pipeline PDFs/` | parse + categorize + analyze in one run | all of the above |
 
 Every command accepts either the SQLite store or a CSV, interchangeably:
 
 ```bash
-.venv/bin/python finances.py analyze --db finances.db
-.venv/bin/python finances.py analyze cleanedData/transactions.csv
+uv run finances analyze --db finances.db
+uv run finances analyze cleanedData/transactions.csv
 ```
 
 ## Things you will probably need
 
 ```bash
 # Encrypted PDFs
-.venv/bin/python finances.py parse PDFs/ --password 1234
+uv run finances parse PDFs/ --password 1234
 
 # A statement extracted wrong — see what the parser saw
-.venv/bin/python parse.py "PDFs/one bad file.pdf" --dump-columns
+uv run python parse.py "PDFs/one bad file.pdf" --dump-columns
 
 # Fail the build if anything does not reconcile (for a cron job)
-.venv/bin/python finances.py check --strict
+uv run finances check --strict
 
 # Re-parse everything, ignoring the cache
-.venv/bin/python finances.py parse PDFs/ --force
+uv run finances parse PDFs/ --force
 
 # Tell it your take-home pay, so it can work out what is left over
-.venv/bin/python finances.py analyze --income 6200
+uv run finances analyze --income 6200
 
 # Teach the categorizer, biggest money first
-.venv/bin/python finances.py categorize review
+uv run finances categorize review
 ```
 
 ## Asking questions offline
@@ -187,15 +200,15 @@ Every command accepts either the SQLite store or a CSV, interchangeably:
 work:
 
 ```bash
-.venv/bin/python finances.py ask --examples
-.venv/bin/python finances.py ask --sql "SELECT category, SUM(amount) FROM transactions GROUP BY 1 ORDER BY 2 DESC"
+uv run finances ask --examples
+uv run finances ask --sql "SELECT category, SUM(amount) FROM transactions GROUP BY 1 ORDER BY 2 DESC"
 ```
 
 With one:
 
 ```bash
 brew install ollama && ollama pull llama3.1:8b
-.venv/bin/python finances.py ask "what did I spend on delivery last month" --explain
+uv run finances ask "what did I spend on delivery last month" --explain
 ```
 
 Something in the 3B–8B range is plenty. Avoid reasoning models here — they take
@@ -283,7 +296,7 @@ Scored against 159 real-shaped descriptors with processor prefixes, glued
 city/state suffixes and issuer preambles:
 
 ```
-$ .venv/bin/python finances.py categorize eval
+$ uv run finances categorize eval
   correct         159  100.0%
   wrong             0    0.0%   <- these corrupt analysis
   left unknown      0    0.0%   <- these are honest
@@ -292,15 +305,17 @@ $ .venv/bin/python finances.py categorize eval
 # Tests
 
 ```bash
-.venv/bin/python -m unittest discover tests
+uv run python -m unittest discover tests
 ```
 
-238 tests, no test dependencies. The golden-file harness records per-statement
-extraction totals so a parser change that moves a number is visible:
+250 tests, no test dependencies. The parser's golden-file tests skip when
+`PDFs/` is empty, so a fresh clone runs the rest. The golden-file harness
+records per-statement extraction totals so a parser change that moves a number
+is visible:
 
 ```bash
-.venv/bin/python tests/run.py --update-golden   # after a deliberate change
-.venv/bin/python tests/run.py --check-golden    # exits 1 on drift
+uv run python tests/run.py --update-golden   # after a deliberate change
+uv run python tests/run.py --check-golden    # exits 1 on drift
 ```
 
 # Privacy

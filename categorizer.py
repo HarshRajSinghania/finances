@@ -48,7 +48,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 
 LEARNED = "learned_rules.json"
-DEFAULT_SOURCE = "finances.db"
+DEFAULT_SOURCE = os.environ.get("FINANCES_DB") or "finances.db"   # as database.DEFAULT_DB
 
 # --------------------------------------------------------------------------
 # One taxonomy. Groups let other scripts ask questions without their own lists.

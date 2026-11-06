@@ -2,7 +2,7 @@
 name = "finances"
 version = "0.2.0"
 description = "Local-first personal finance analysis, from statement PDFs. Nothing leaves the machine."
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 # pdfplumber is the only genuine dependency, and only parse.py imports it.
 # Everything downstream is standard library, so the analysis half of the
 # toolchain runs anywhere Python does.
@@ -31,6 +31,7 @@ py-modules = [
     "categorizer",
     "cpi",
     "database",
+    "demo",
     "engine",
     "finances",
     "financial_auditor",
