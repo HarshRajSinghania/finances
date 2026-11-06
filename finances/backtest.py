@@ -7,11 +7,11 @@ one. This module is the check: it walks the data month by month, hands each
 predictor only the transactions dated *before* the month it is being asked
 about, and scores the answer against the month that really happened.
 
-    python backtest.py --db finances.db
-    python backtest.py --db finances.db --category Dining
-    python backtest.py --db finances.db --min-history 3
-    python backtest.py --db finances.db --income 4000     # grade the planner too
-    python backtest.py --db finances.db -o backtest.html
+    finances backtest --db finances.db
+    finances backtest --db finances.db --category Dining
+    finances backtest --db finances.db --min-history 3
+    finances backtest --db finances.db --income 4000     # grade the planner too
+    finances backtest --db finances.db -o backtest.html
 
 Two things get graded:
 
@@ -45,16 +45,15 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from database import DEFAULT_DB                                   # noqa: E402
-from engine import Engine, SpendingForecast                       # noqa: E402
-from utils import fmt_money as money, merchant_key                 # noqa: E402
+from finances.database import DEFAULT_DB                                   # noqa: E402
+from finances.engine import Engine, SpendingForecast                       # noqa: E402
+from finances.utils import fmt_money as money, merchant_key                 # noqa: E402
 
 # planner.py is imported, not copied: its allocation waterfall is the thing
 # under test, so re-implementing it here would grade a lookalike.
 try:
-    from planner import load_plan, plan_goals
+    from finances.planner import load_plan, plan_goals
     PLANNER_IMPORTED = True
     PLANNER_NOTE = "imported plan_goals/_run_forward from planner.py"
 except Exception as exc:                                          # pragma: no cover
@@ -1027,7 +1026,7 @@ def run(args) -> dict:
     txns = eng.transactions
     if not txns:
         raise SystemExit(f"{args.db} has no transactions. Run:  "
-                         f"python parse.py <PDFs> --db {args.db}")
+                         f"finances parse <PDFs> --db {args.db}")
 
     by_month = eng.by_month()
     complete = eng.complete_months()

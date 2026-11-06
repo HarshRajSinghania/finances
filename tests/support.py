@@ -72,7 +72,7 @@ def txn(date, amount, description="THING", **kw):
     assertion; everything else is keyword so the intent of a fixture stays
     readable at the call site.
     """
-    from models import Transaction
+    from finances.models import Transaction
 
     kw.setdefault("category", "Shopping")
     kw.setdefault("account_last4", "1111")
@@ -82,7 +82,7 @@ def txn(date, amount, description="THING", **kw):
 
 def stmt(source_file, **kw):
     """A :class:`models.Statement` for a test row."""
-    from models import Statement
+    from finances.models import Statement
 
     kw.setdefault("issuer", "TestBank")
     kw.setdefault("account_last4", "1111")

@@ -3,7 +3,7 @@
 # named here, so a new personal file can never be sent to the Docker daemon or
 # baked into an image by accident.
 *
-!*.py
+!finances/
 !pyproject.toml
 !uv.lock
 !docker/

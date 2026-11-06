@@ -8,12 +8,12 @@ nobody anticipated ("how much did I spend at that one bakery in March") by
 letting a *local* model write the SQL and then refusing to run it unless it is
 provably read-only.
 
-    python ask.py "how much did I spend on coffee in March"
-    python ask.py "what are my biggest merchants" --explain
-    python ask.py --sql "SELECT category, SUM(amount) FROM transactions GROUP BY 1"
-    python ask.py --examples                 # hand-written queries, no model needed
-    python ask.py --example top-merchants    # run one of them
-    python ask.py --schema                   # exactly what the model gets told
+    finances ask "how much did I spend on coffee in March"
+    finances ask "what are my biggest merchants" --explain
+    finances ask --sql "SELECT category, SUM(amount) FROM transactions GROUP BY 1"
+    finances ask --examples                 # hand-written queries, no model needed
+    finances ask --example top-merchants    # run one of them
+    finances ask --schema                   # exactly what the model gets told
 
 Nothing leaves the machine. The model, when there is one, is whatever
 OpenAI-compatible server is already listening on localhost — llm_enrich.py
@@ -51,13 +51,12 @@ import time
 import urllib.parse
 from datetime import date
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from database import DEFAULT_DB
-from utils import fmt_money
+from finances.database import DEFAULT_DB
+from finances.utils import fmt_money
 
 try:
-    from engine import NON_SPEND
+    from finances.engine import NON_SPEND
 except ImportError:                                          # pragma: no cover
     NON_SPEND = {"Payment", "Credits/Refunds", "Transfers/Cash", "Income"}
 
@@ -65,7 +64,7 @@ except ImportError:                                          # pragma: no cover
 # missing, or its imports are, the whole natural-language path degrades to a
 # message and --sql/--examples carry on working.
 try:
-    from llm_enrich import (COMMON_ENDPOINTS, choose_model, describe,
+    from finances.llm_enrich import (COMMON_ENDPOINTS, choose_model, describe,
                             describe_device, detect_device, discover,
                             http_json, total_ram_gb)
     HAVE_LLM = True
@@ -260,7 +259,7 @@ def open_readonly(path: str) -> sqlite3.Connection:
     """Open the store read-only. Introspection runs before the guard is armed."""
     if not os.path.exists(path):
         raise SystemExit(
-            f"{path} does not exist. Build it with:  python parse.py <PDFs> --db {path}")
+            f"{path} does not exist. Build it with:  finances parse <PDFs> --db {path}")
     uri = "file:" + urllib.parse.quote(os.path.abspath(path)) + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
@@ -724,11 +723,11 @@ def no_model_message(question: str | None, endpoint: str | None) -> str:
     if not HAVE_LLM:
         lines.append(f"  (llm_enrich.py could not be imported: {_LLM_IMPORT_ERROR})")
 
-    works = [("python ask.py --examples",
+    works = [("finances ask --examples",
               "hand-written queries for the common questions"),
-             ("python ask.py --example top-merchants", "run one of them"),
-             ('python ask.py --sql "SELECT ..."', "run your own SQL"),
-             ("python ask.py --schema",
+             ("finances ask --example top-merchants", "run one of them"),
+             ('finances ask --sql "SELECT ..."', "run your own SQL"),
+             ("finances ask --schema",
               "the schema, so you can write that SQL")]
     pad = max(len(c) for c, _ in works)
     lines += ["", "This tool still works without one:"]
@@ -738,7 +737,7 @@ def no_model_message(question: str | None, endpoint: str | None) -> str:
     if close:
         lines += ["", "Closest canned queries to what you asked:"]
         for key in close:
-            lines.append(f"  python ask.py --example {key:<18} {EXAMPLE_INDEX[key][0]}")
+            lines.append(f"  finances ask --example {key:<18} {EXAMPLE_INDEX[key][0]}")
 
     lines += ["", "To answer questions in plain English, run a model locally "
               "(one time, then offline forever):",
@@ -787,11 +786,11 @@ def main() -> int:
         description="Ask the finances store a question, offline.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  python ask.py "how much did I spend on coffee in March"
-  python ask.py "what are my biggest merchants" --explain
-  python ask.py --sql "SELECT category, SUM(amount) FROM transactions GROUP BY 1"
-  python ask.py --examples
-  python ask.py --schema""")
+  finances ask "how much did I spend on coffee in March"
+  finances ask "what are my biggest merchants" --explain
+  finances ask --sql "SELECT category, SUM(amount) FROM transactions GROUP BY 1"
+  finances ask --examples
+  finances ask --schema""")
     ap.add_argument("question", nargs="*", help="the question, in plain English")
     ap.add_argument("--db", default=DEFAULT_DB, help=f"SQLite store (default {DEFAULT_DB})")
     ap.add_argument("--sql", help="run this SQL instead of asking a model")

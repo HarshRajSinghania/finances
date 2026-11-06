@@ -13,9 +13,9 @@ detect_recurring() found, the paycheck cadence in the income rows, and the
 everyday variable spend that is whatever is left over — and prints a calendar
 with the low-water mark marked.
 
-    python cashflow.py --db finances.db --days 60
-    python cashflow.py --balance 2400 --days 90 --danger 500
-    python cashflow.py -o cashflow.html
+    finances cashflow --db finances.db --days 60
+    finances cashflow --balance 2400 --days 90 --danger 500
+    finances cashflow -o cashflow.html
 
 It is a projection, so it is rendered as a band rather than a line. The width of
 that band comes from real measurements: each recurring charge carries a
@@ -38,12 +38,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from database import DEFAULT_DB                                  # noqa: E402
-from engine import Engine                                        # noqa: E402
-from models import Statement                                     # noqa: E402
-from utils import Recurring, fmt_money as money, merchant_key    # noqa: E402
+from finances.database import DEFAULT_DB                                  # noqa: E402
+from finances.engine import Engine                                        # noqa: E402
+from finances.models import Statement                                     # noqa: E402
+from finances.utils import Recurring, fmt_money as money, merchant_key    # noqa: E402
 
 DAY = timedelta(days=1)
 AVG_MONTH = 365.25 / 12.0          # days, so a monthly figure becomes a daily rate
@@ -1274,7 +1273,7 @@ statements, not financial advice.</footer>
 def main():
     ap = argparse.ArgumentParser(
         description="Project the checking balance forward and say when it goes wrong.",
-        epilog="Example:  python cashflow.py --db finances.db --days 60 --danger 500")
+        epilog="Example:  finances cashflow --db finances.db --days 60 --danger 500")
     ap.add_argument("--db", default=DEFAULT_DB,
                     help=f"SQLite store or transactions CSV (default {DEFAULT_DB})")
     ap.add_argument("--days", type=int, default=60,
@@ -1308,7 +1307,7 @@ def main():
         if not os.path.exists(args.db):
             raise SystemExit(
                 f"{args.db} does not exist. Build it with:  "
-                f"python parse.py <PDFs> --db {args.db}")
+                f"finances parse <PDFs> --db {args.db}")
         eng = Engine(args.db)
 
     try:
@@ -1322,7 +1321,7 @@ def main():
 def run(eng: Engine, args, anchor: date) -> int:
     if not eng.transactions:
         print(f"\n  {args.db} has no transactions, so there is nothing to project.")
-        print(f"  Run:  python parse.py <PDFs> --db {args.db}\n")
+        print(f"  Run:  finances parse <PDFs> --db {args.db}\n")
         return 1
 
     cov = eng.coverage()
@@ -1339,7 +1338,7 @@ def run(eng: Engine, args, anchor: date) -> int:
         print("  A projection with no starting balance is meaningless, and assuming zero")
         print("  would be a lie, so nothing is projected. Pass the number yourself:")
         print()
-        print(f"      python cashflow.py --db {args.db} --balance 2400 --days {args.days}")
+        print(f"      finances cashflow --db {args.db} --balance 2400 --days {args.days}")
         print()
         print("  Read it off your banking app, or off the last page of the most recent")
         print("  checking statement. Everything else below the balance is already known.")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-finances.py — one way in.
+finances — one way in.
 
 The toolchain grew as a set of separate scripts, each with its own arguments and
 its own idea of what to read. That is fine when you wrote them, and hostile when
@@ -34,13 +34,9 @@ Standard library only.
 from __future__ import annotations
 
 import importlib
-import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-
-from database import DEFAULT_DB  # noqa: E402
+from finances.database import DEFAULT_DB
 
 # subcommand -> (module, one-line help)
 COMMANDS: dict[str, tuple[str, str]] = {
@@ -91,15 +87,15 @@ def usage(code: int = 0):
     sys.exit(code)
 
 
-def run(module_name: str, argv: list[str]) -> int:
+def run(module_name: str, argv: list[str], prog: str | None = None) -> int:
     """Hand control to a tool's own main(), with argv shaped as it expects."""
     try:
-        mod = importlib.import_module(module_name)
+        mod = importlib.import_module(f"finances.{module_name}")
     except ImportError as e:
-        print(f"finances: cannot load {module_name}.py ({e})", file=sys.stderr)
+        print(f"finances: cannot load finances.{module_name} ({e})", file=sys.stderr)
         return 1
     if not hasattr(mod, "main"):
-        print(f"finances: {module_name}.py has no main()", file=sys.stderr)
+        print(f"finances: finances.{module_name} has no main()", file=sys.stderr)
         return 1
 
     known, default = SUBCOMMANDS.get(module_name, (set(), ""))
@@ -109,7 +105,9 @@ def run(module_name: str, argv: list[str]) -> int:
             argv = [default, *argv]
 
     saved = sys.argv
-    sys.argv = [f"{module_name}.py", *argv]
+    # argparse names itself after argv[0], so --help says "finances parse", not a
+    # module path nobody types.
+    sys.argv = [prog or f"finances {module_name}", *argv]
     try:
         return mod.main() or 0
     except SystemExit as e:                 # argparse and sys.exit() from the tool
@@ -127,8 +125,8 @@ def cmd_check(argv: list[str]) -> int:
     """
     import argparse
 
-    from engine import Engine
-    from utils import fmt_money
+    from finances.engine import Engine
+    from finances.utils import fmt_money
 
     ap = argparse.ArgumentParser(prog="finances check",
                                  description="Reconciliation and coverage report.")
@@ -183,7 +181,7 @@ def cmd_check(argv: list[str]) -> int:
             return 0
 
         print("Totals computed from this store may be wrong. Diagnose a file with:")
-        print("  python parse.py PDFs/<file>.pdf --dump-columns")
+        print("  finances parse PDFs/<file>.pdf --dump-columns")
         return 1 if args.strict else 0
 
 
@@ -230,7 +228,7 @@ def main() -> int:
         return cmd_check(rest)
     if cmd == "pipeline":
         return cmd_pipeline(rest)
-    return run(COMMANDS[cmd][0], rest)
+    return run(COMMANDS[cmd][0], rest, prog=f"finances {cmd}")
 
 
 if __name__ == "__main__":

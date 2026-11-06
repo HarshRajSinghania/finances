@@ -33,10 +33,10 @@ significance the report says so rather than printing a shrug as a finding.
 
 Usage:
 
-    python cpi.py --db finances.db              full report
-    python cpi.py --db finances.db --income 72000   adds the national benchmark
-    python cpi.py --db finances.db --merchants  per-merchant price table only
-    python cpi.py -o cpi.html                   self-contained page
+    finances cpi --db finances.db              full report
+    finances cpi --db finances.db --income 72000   adds the national benchmark
+    finances cpi --db finances.db --merchants  per-merchant price table only
+    finances cpi -o cpi.html                   self-contained page
 
 National figures come from reference_data.py, which is frozen and cited. Nothing
 here touches the network.
@@ -55,13 +55,12 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from itertools import combinations
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import reference_data as ref                                     # noqa: E402
-from database import DEFAULT_DB                                  # noqa: E402
-from engine import Engine                                        # noqa: E402
-from models import Transaction                                   # noqa: E402
-from utils import fmt_money as money, merchant_key               # noqa: E402
+from finances import reference_data as ref                                     # noqa: E402
+from finances.database import DEFAULT_DB                                  # noqa: E402
+from finances.engine import Engine                                        # noqa: E402
+from finances.models import Transaction                                   # noqa: E402
+from finances.utils import fmt_money as money, merchant_key               # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -1262,7 +1261,7 @@ def main():
         if not eng.transactions:
             raise SystemExit(
                 f"{args.db} has no transactions. Run:  "
-                f"python parse.py <PDFs> --db {args.db}")
+                f"finances parse <PDFs> --db {args.db}")
         if args.output:
             render_html(eng, args, args.output)
         else:

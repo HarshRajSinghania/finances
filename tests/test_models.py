@@ -15,7 +15,7 @@ from dataclasses import fields
 
 import support  # noqa: F401  (puts the repo root on sys.path)
 
-from models import Statement, Transaction
+from finances.models import Statement, Transaction
 
 
 class TransactionColumnsTests(unittest.TestCase):

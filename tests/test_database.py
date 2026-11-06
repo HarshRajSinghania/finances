@@ -22,8 +22,8 @@ import unittest
 import support
 from support import stmt, txn
 
-from database import DEFAULT_DB, FinanceDB, open_db
-from models import Statement, Transaction
+from finances.database import DEFAULT_DB, FinanceDB, open_db
+from finances.models import Statement, Transaction
 
 
 class DatabaseTestCase(support.TempDirMixin, unittest.TestCase):

@@ -9,14 +9,14 @@ The input is the shared store or a CSV, and the labels go back where they came
 from: run it against finances.db and the improved categories are there for
 every other tool, with no export step in between.
 
-    python llm_enrich.py                              # finances.db, labels written back
-    python llm_enrich.py finances.db -o enriched.csv  # and a CSV as well
-    python llm_enrich.py transactions.csv -o transactions_enriched.csv
+    finances enrich                              # finances.db, labels written back
+    finances enrich finances.db -o enriched.csv  # and a CSV as well
+    finances enrich transactions.csv -o transactions_enriched.csv
 
-    python llm_enrich.py --endpoint http://localhost:11434/v1 --model llama3.1:8b
-    python llm_enrich.py --list-models            # what fits on this machine
-    python llm_enrich.py --only-uncategorized     # faster
-    python llm_enrich.py --dry-run                # show the prompt, send nothing
+    finances enrich --endpoint http://localhost:11434/v1 --model llama3.1:8b
+    finances enrich --list-models            # what fits on this machine
+    finances enrich --only-uncategorized     # faster
+    finances enrich --dry-run                # show the prompt, send nothing
 
 Model choice is automatic and size-aware: it reads how much RAM you have, skips
 anything that would not fit in 60% of it, and never auto-picks a model above
@@ -43,13 +43,12 @@ import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from database import DEFAULT_DB, FinanceDB
-from engine import load_transactions
-from models import Transaction
+from finances.database import DEFAULT_DB, FinanceDB
+from finances.engine import load_transactions
+from finances.models import Transaction
 
 try:
-    from categorizer import CATEGORIES          # one taxonomy for every script
+    from finances.categorizer import CATEGORIES          # one taxonomy for every script
 except ImportError:
     CATEGORIES = [
         "Groceries", "Dining", "Coffee", "Delivery", "Alcohol/Bars", "Transport",

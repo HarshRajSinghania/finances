@@ -11,37 +11,14 @@ dependencies = [
 ]
 
 [project.scripts]
-finances = "finances:main"
+finances = "finances.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# A flat set of modules rather than a package directory. Setuptools cannot infer
-# that on its own and refuses to guess, so the list is spelled out — otherwise
-# the build fails and the `finances` console script never gets installed.
-py-modules = [
-    "analyze",
-    "anonymize",
-    "ask",
-    "backtest",
-    "benchmark_descriptors",
-    "cashflow",
-    "categorizer",
-    "cpi",
-    "database",
-    "demo",
-    "engine",
-    "finances",
-    "financial_auditor",
-    "llm_enrich",
-    "models",
-    "parse",
-    "planner",
-    "reference_data",
-    "utils",
-]
+packages = ["finances"]
 
 [tool.uv]
 package = true

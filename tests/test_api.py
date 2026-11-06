@@ -17,8 +17,8 @@ from http.server import ThreadingHTTPServer
 
 import support
 
-import api
-from database import FinanceDB
+from finances import api
+from finances.database import FinanceDB
 
 
 class GuardTest(support.TempDirMixin, unittest.TestCase):

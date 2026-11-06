@@ -21,7 +21,7 @@ from datetime import date, timedelta
 
 import support  # noqa: F401  (puts the repo root on sys.path)
 
-from utils import (Recurring, detect_recurring, file_sha256, fmt_money,
+from finances.utils import (Recurring, detect_recurring, file_sha256, fmt_money,
                    future_value, merchant_key, parse_date, parse_money,
                    payoff_months, read_csv_rows)
 
@@ -491,7 +491,7 @@ class DetectRecurringTests(unittest.TestCase):
 
     # -- input shapes -----------------------------------------------------
     def test_accepts_transaction_objects(self):
-        from models import Transaction
+        from finances.models import Transaction
         items = [Transaction(date=f"2026-0{m}-15", description="NETFLIX.COM",
                              amount=15.99, category="Subscriptions")
                  for m in range(1, 7)]

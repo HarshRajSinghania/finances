@@ -6,15 +6,15 @@ Every other script imports this. Before it existed the taxonomy was defined in
 four files with four different category lists, so an LLM label of "Coffee" or
 "Lodging" arrived downstream as an unknown.
 
-    from categorizer import categorize, Categorizer, TAXONOMY
+    from finances.categorizer import categorize, Categorizer, TAXONOMY
 
 Command line (a source is a .db or a .csv; it defaults to finances.db):
-    python categorizer.py apply --db finances.db        # re-categorise in place
-    python categorizer.py apply finances.db -o categorized.csv
-    python categorizer.py stats finances.db             # coverage by DOLLARS
-    python categorizer.py review finances.db            # teach it, biggest money first
-    python categorizer.py eval                          # score against the benchmark
-    python categorizer.py explain "SQ *BLUE BOTTLE COFFEE OAKLAND CA"
+    finances categorize apply --db finances.db        # re-categorise in place
+    finances categorize apply finances.db -o categorized.csv
+    finances categorize stats finances.db             # coverage by DOLLARS
+    finances categorize review finances.db            # teach it, biggest money first
+    finances categorize eval                          # score against the benchmark
+    finances categorize explain "SQ *BLUE BOTTLE COFFEE OAKLAND CA"
 
 How it decides, in order. First hit wins, and every answer records which rule
 fired and how sure it is:
@@ -862,7 +862,7 @@ def category_of(descriptor, learned_path=LEARNED):
 def load_source(source):
     """Transactions from a .db or a .csv. Imported lazily: engine imports the
     taxonomy from here, and a module-level import would close the circle."""
-    from engine import load_transactions
+    from finances.engine import load_transactions
     txns = load_transactions(source)
     if not txns:
         sys.exit(f"{source} has no transactions")
@@ -870,13 +870,13 @@ def load_source(source):
 
 
 def write_store(source, txns):
-    from database import FinanceDB
+    from finances.database import FinanceDB
     with FinanceDB(source) as db:
         db.upsert_transactions(txns)
 
 
 def write_csv(path, txns, results, extras=True):
-    from models import Transaction
+    from finances.models import Transaction
     cols = Transaction.columns()
     if extras:
         cols = cols + ["category_source", "category_confidence", "merchant_clean"]
@@ -1004,7 +1004,7 @@ def cmd_stats(args):
         print(f"\n  Biggest unknowns — teaching it these 10 covers the most money:")
         for name, (amt, n) in sorted(unknown.items(), key=lambda kv: -kv[1][0])[:10]:
             print(f"    ${amt:>10,.0f}  {n:>3}x  {name[:44]}")
-        print(f"\n  Fix them interactively:  python categorizer.py review {source}")
+        print(f"\n  Fix them interactively:  finances categorize review {source}")
 
 
 def cmd_review(args):
@@ -1089,12 +1089,12 @@ def cmd_review(args):
     cz.save()
     print(f"\nLearned {taught} merchant(s) -> {args.learned}")
     if taught:
-        print(f"Re-run to apply:  python categorizer.py apply {source}")
+        print(f"Re-run to apply:  finances categorize apply {source}")
 
 
 def cmd_eval(args):
     try:
-        from benchmark_descriptors import CASES
+        from finances.benchmark_descriptors import CASES
     except ImportError:
         sys.exit("benchmark_descriptors.py not found next to this script")
     cz = Categorizer(args.learned if args.use_learned else None)

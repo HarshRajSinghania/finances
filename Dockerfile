@@ -21,7 +21,7 @@ WORKDIR /app
 # Dependencies first, so editing a .py file does not reinstall pdfplumber.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-install-project
-COPY *.py ./
+COPY finances/ ./finances/
 RUN uv sync --locked
 COPY --from=web /web/dist ./web/dist
 COPY docker/entrypoint.sh /usr/local/bin/finances-entrypoint

@@ -59,7 +59,7 @@ def corpus() -> dict[str, tuple]:
     """
     global _CORPUS
     if _CORPUS is None:
-        import parse
+        from finances import parse
         out = {}
         for p in support.pdf_paths():
             name = os.path.basename(p)
@@ -112,7 +112,7 @@ class StatementStructureTests(unittest.TestCase):
                 self.assertRegex(last4, r"^\d{4}$")
 
     def test_every_statement_produces_a_statement_model(self):
-        from models import Statement
+        from finances.models import Statement
         for name, _txns, meta in parsed_items():
             with self.subTest(pdf=name):
                 s = meta.get("statement")

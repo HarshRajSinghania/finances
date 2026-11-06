@@ -21,7 +21,7 @@ import sqlite3
 from collections import defaultdict
 from contextlib import contextmanager
 
-from models import Statement, Transaction
+from finances.models import Statement, Transaction
 
 # FINANCES_DB lets a container, or a second store such as the demo, be chosen
 # once instead of with --db on every command.

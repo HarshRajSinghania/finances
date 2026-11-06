@@ -7,12 +7,12 @@ still *worth analysing*: the totals, the trends and the recurring charges have
 to survive, or the advice you get back is about a different person's money. So
 every run ends by proving what survived and admitting what did not.
 
-    python anonymize.py                                  # finances.db, level medium
-    python anonymize.py finances.db --level light
-    python anonymize.py finances.db --level heavy
-    python anonymize.py finances.db --level synthetic    # no real rows survive
-    python anonymize.py transactions.csv -o shareable.csv
-    python anonymize.py finances.db -o shareable.db      # a store, not a CSV
+    finances anonymize                                  # finances.db, level medium
+    finances anonymize finances.db --level light
+    finances anonymize finances.db --level heavy
+    finances anonymize finances.db --level synthetic    # no real rows survive
+    finances anonymize transactions.csv -o shareable.csv
+    finances anonymize finances.db -o shareable.db      # a store, not a CSV
 
 Levels, least to most protective:
 
@@ -53,10 +53,10 @@ import sys
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
-from database import DEFAULT_DB, FinanceDB
-from engine import load_transactions
-from models import Transaction
-from utils import detect_recurring, merchant_key
+from finances.database import DEFAULT_DB, FinanceDB
+from finances.engine import load_transactions
+from finances.models import Transaction
+from finances.utils import detect_recurring, merchant_key
 
 DROP_ALWAYS = ["description", "post_date", "statement_period", "source_file"]
 
@@ -99,7 +99,7 @@ FAKE_NAMES = {
 GENERIC = ["Vendor One", "Vendor Two", "Vendor Three", "Vendor Four", "Vendor Five"]
 
 try:
-    from categorizer import NON_SPEND, normalize
+    from finances.categorizer import NON_SPEND, normalize
 except ImportError:                                          # pragma: no cover
     NON_SPEND = {"Payment", "Credits/Refunds", "Transfers/Cash", "Income"}
     normalize = None

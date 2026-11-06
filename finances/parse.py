@@ -36,11 +36,11 @@ Money IN (payments, refunds, credits) is NEGATIVE.
 Usage
 -----
     pip install pdfplumber
-    python parse.py ./statements -o transactions.csv
-    python parse.py ./statements -o transactions.csv --password 1234
-    python parse.py ./statements -o transactions.csv --strict   # fail on mismatch
-    python parse.py one_bad_file.pdf --dump-columns             # diagnose
-    python parse.py one_bad_file.pdf --dump-text ./raw          # diagnose
+    finances parse ./statements -o transactions.csv
+    finances parse ./statements -o transactions.csv --password 1234
+    finances parse ./statements -o transactions.csv --strict   # fail on mismatch
+    finances parse one_bad_file.pdf --dump-columns             # diagnose
+    finances parse one_bad_file.pdf --dump-text ./raw          # diagnose
 """
 
 import argparse
@@ -58,16 +58,15 @@ except ImportError:
     sys.exit("Missing dependency. Run:  pip install pdfplumber")
 
 # Shared foundation: one definition of money/date parsing, the row schema and
-# the SQLite store, used by every tool in this folder.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import MONTHS, file_sha256, parse_date, parse_money  # noqa: E402
-from models import Statement, Transaction                        # noqa: E402
-from database import DEFAULT_DB, FinanceDB                        # noqa: E402
+# the SQLite store, used by every tool in the package.
+from finances.utils import MONTHS, file_sha256, parse_date, parse_money  # noqa: E402
+from finances.models import Statement, Transaction                        # noqa: E402
+from finances.database import DEFAULT_DB, FinanceDB                        # noqa: E402
 
 # The shared engine decides categories. If it isn't next to this script the
 # built-in rules below are used instead, so nothing hard-fails.
 try:
-    from categorizer import Categorizer as _Categorizer
+    from finances.categorizer import Categorizer as _Categorizer
     _CZ = _Categorizer()
     SHARED_CATEGORIZER = True
 except Exception:
@@ -79,7 +78,7 @@ except Exception:
 # from checking is money out of the account but not consumption, and counting
 # it here made "Payment" look like a $3.3k spending category.
 try:
-    from categorizer import NON_SPEND
+    from finances.categorizer import NON_SPEND
 except Exception:
     NON_SPEND = {"Payment", "Credits/Refunds", "Transfers/Cash", "Income"}
 
@@ -321,7 +320,7 @@ CATEGORIES = [(name, re.compile(pat, re.IGNORECASE)) for name, pat in CATEGORIES
 
 def clean_merchant(desc):
     if _CZ is not None:
-        from categorizer import normalize as _normalize
+        from finances.categorizer import normalize as _normalize
         cleaned, _ = _normalize(desc)
         if cleaned:
             return cleaned

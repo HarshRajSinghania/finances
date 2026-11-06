@@ -18,9 +18,9 @@ from unittest import mock
 import support
 
 if support.has_pdfplumber():
-    import demo
-    from database import FinanceDB
-    from engine import Engine
+    from finances import demo
+    from finances.database import FinanceDB
+    from finances.engine import Engine
 
 
 @unittest.skipUnless(support.has_pdfplumber(), "demo.py imports parse.py, which needs pdfplumber")

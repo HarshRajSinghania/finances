@@ -4,9 +4,9 @@ Personal finance analysis that reads your statement PDFs directly. No bank
 login, no Plaid, no account linking, no cloud. Everything runs on your machine
 and nothing is uploaded anywhere.
 
-[![A 20-second tour of finances, on made-up demo data](docs/demo.jpg)](docs/demo.mp4)
+[![A 20-second tour of finances, on made-up demo data](docs/demo.gif)](docs/demo.mp4)
 
-*20 seconds, on the made-up data from `finances demo`. Click to play.*
+*20 seconds, on the made-up data from `finances demo`. Click for the full video with sound.*
 
 The thing that makes it different: **a statement prints its own totals, so the
 extraction can be proved correct.** Every figure this produces traces back to a
@@ -179,7 +179,7 @@ uv run finances analyze cleanedData/transactions.csv
 uv run finances parse PDFs/ --password 1234
 
 # A statement extracted wrong — see what the parser saw
-uv run python parse.py "PDFs/one bad file.pdf" --dump-columns
+uv run finances parse "PDFs/one bad file.pdf" --dump-columns
 
 # Fail the build if anything does not reconcile (for a cron job)
 uv run finances check --strict
@@ -220,7 +220,7 @@ minutes per question for no benefit on this task. Pick explicitly with
 | Symptom | Cause and fix |
 |---|---|
 | `finances.db does not exist` | Run `parse` first. |
-| `check` reports mismatches | The extraction is wrong for those files. Run `parse.py <file> --dump-columns` to see the columns it found. |
+| `check` reports mismatches | The extraction is wrong for those files. Run `finances parse <file> --dump-columns` to see the columns it found. |
 | `check` reports gaps | A statement month is missing from your folder. Totals are being computed on incomplete data. |
 | Lots of `Uncategorized` | `categorize review` to teach it, or `enrich` to use a local LLM. |
 | `cashflow` will not project | It could not find a checking-account balance. Pass `--balance 2400`. |
@@ -237,6 +237,21 @@ PDFs ──▶ parse.py ──▶ finances.db ──▶ engine.py ──▶ ever
        statement against            spending, which months are complete,
        its printed totals           what repeats, what is verified
 ```
+
+```
+finances/          the package — one module per tool, plus the shared core below
+  cli.py           `finances <command>`: the front door, dispatches to each tool
+  parse.py         PDFs -> the store, reconciling each statement as it goes
+  engine.py        the read model every tool shares
+  api.py           the dashboard's JSON API and static server
+  demo.py          the made-up store
+  ...              analyze, cashflow, cpi, backtest, ask, planner, anonymize, ...
+web/               the dashboard (React + Vite), served by `finances web`
+tests/             stdlib unittest, no test dependencies
+docker/  Dockerfile  docker-compose.yml
+```
+
+Every module still runs on its own too: `python -m finances.parse --help`.
 
 - **`models.py`** — one definition of a transaction and a statement. The SQLite
   schema and the CSV columns are both generated from it, so adding a field is a

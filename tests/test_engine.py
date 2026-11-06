@@ -21,8 +21,8 @@ from datetime import date
 import support
 from support import stmt, txn
 
-from database import FinanceDB
-from engine import (ESSENTIAL, NON_SPEND, Engine, SavingsForecast,
+from finances.database import FinanceDB
+from finances.engine import (ESSENTIAL, NON_SPEND, Engine, SavingsForecast,
                     SpendingForecast, load_transactions, month_key)
 
 

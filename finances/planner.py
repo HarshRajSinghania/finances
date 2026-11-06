@@ -5,15 +5,15 @@ planner.py — plan what you're saving for, using your own numbers.
 It reads your transactions to work out what you actually have spare each month,
 then tells you whether your goals fit in it and when each one lands.
 
-    python planner.py init --source finances.db --income 5000
-    python planner.py add "Emergency fund" --target 12000 --priority 1
-    python planner.py add "New car" --target 20000 --by 2027-06 --saved 1500
-    python planner.py add "Japan trip" --target 4500 --by 2026-11 --priority 3
-    python planner.py status
-    python planner.py contribute "New car" 500
-    python planner.py simulate --monthly 900
-    python planner.py simulate --cut Dining=30 --cut Delivery=50
-    python planner.py report -o plan.html
+    finances plan init --source finances.db --income 5000
+    finances plan add "Emergency fund" --target 12000 --priority 1
+    finances plan add "New car" --target 20000 --by 2027-06 --saved 1500
+    finances plan add "Japan trip" --target 4500 --by 2026-11 --priority 3
+    finances plan status
+    finances plan contribute "New car" 500
+    finances plan simulate --monthly 900
+    finances plan simulate --cut Dining=30 --cut Delivery=50
+    finances plan report -o plan.html
 
 --source takes either the shared store (finances.db) or a legacy transactions
 CSV; the old --csv spelling still works. The numbers behind a plan — monthly
@@ -39,14 +39,13 @@ import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # One store, one set of semantics. The Engine owns what counts as spending,
 # which months are complete, what repeats and how much of it reconciles; the
 # planner only decides what to do with the money that is left over.
-from database import DEFAULT_DB  # noqa: E402
-from engine import Engine  # noqa: E402
-from utils import fmt_money as money, future_value  # noqa: E402
+from finances.database import DEFAULT_DB  # noqa: E402
+from finances.engine import Engine  # noqa: E402
+from finances.utils import fmt_money as money, future_value  # noqa: E402
 
 PLAN = "plan.json"
 
@@ -137,7 +136,7 @@ def open_engine(source, required=True):
     if not os.path.exists(source):
         if required:
             sys.exit(f"{source} does not exist. Build it with:  "
-                     f"python parse.py PDFs --db {DEFAULT_DB}")
+                     f"finances parse PDFs --db {DEFAULT_DB}")
         return None
     return Engine.from_source(source)
 

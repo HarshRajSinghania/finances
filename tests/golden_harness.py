@@ -68,7 +68,7 @@ def verdict(txns, meta) -> str:
 
 def record(pdf_path: str) -> dict:
     """Parse one PDF and reduce it to the facts worth recording."""
-    import parse
+    from finances import parse
 
     return record_from(pdf_path, *parse.parse_statement(pdf_path))
 

@@ -759,7 +759,7 @@ CAVEATS = (
 
 
 def _check() -> list[str]:
-    """Internal consistency checks. Run with ``python reference_data.py``."""
+    """Internal consistency checks. Run with ``python -m finances.reference_data``."""
     problems = []
     for name, row in CE_2024.items():
         if len(row) != 6:

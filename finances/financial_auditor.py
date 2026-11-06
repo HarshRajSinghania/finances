@@ -5,16 +5,16 @@ financial_auditor.py — your strict grandfather goes through your statements.
 He is not impressed. He wants to know what each thing was for. If you can't
 tell him, he assumes it's fraud and tells you to call the bank.
 
-    python financial_auditor.py audit                           # the reckoning
-    python financial_auditor.py audit -i                        # he asks, you answer
-    python financial_auditor.py audit --clean                   # no swearing
-    python financial_auditor.py audit transactions.csv --report audit.md
+    finances audit                           # the reckoning
+    finances audit -i                        # he asks, you answer
+    finances audit --clean                   # no swearing
+    finances audit transactions.csv --report audit.md
 
-    python financial_auditor.py use "Netflix"                   # log that you used it
-    python financial_auditor.py usage                           # cost per use, verdicts
-    python financial_auditor.py monitor --minutes 480           # watch what you open
-    python financial_auditor.py debt --statements               # what you owe, from the store
-    python financial_auditor.py disputes                        # what to call the bank about
+    finances audit use "Netflix"                   # log that you used it
+    finances audit usage                           # cost per use, verdicts
+    finances audit monitor --minutes 480           # watch what you open
+    finances audit debt --statements               # what you owe, from the store
+    finances audit disputes                        # what to call the bank about
 
 Anywhere a file is asked for, he takes either the shared store (finances.db) or
 a legacy transactions CSV, and defaults to the store. Reading goes through
@@ -43,17 +43,16 @@ from datetime import date, datetime, timedelta
 
 LEDGER = "auditor_ledger.json"
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from categorizer import ESSENTIAL as _ESSENTIAL, NON_SPEND as _NON_SPEND
+    from finances.categorizer import ESSENTIAL as _ESSENTIAL, NON_SPEND as _NON_SPEND
 except ImportError:
     _ESSENTIAL, _NON_SPEND = set(), set()
 
 # The shared read model and the shared helpers. There is one recurring-charge
 # detector for the whole toolchain and it lives in utils; this file used to keep
 # its own and they drifted apart.
-from engine import DEFAULT_DB, Engine  # noqa: E402
-from utils import (  # noqa: E402
+from finances.engine import DEFAULT_DB, Engine  # noqa: E402
+from finances.utils import (  # noqa: E402
     detect_recurring, fmt_money as money, merchant_key, payoff_months,
 )
 
@@ -179,7 +178,7 @@ def open_source(path=DEFAULT_DB, required=True):
         if not required:
             return None
         sys.exit(f"No such file: {path}\n"
-                 f"Build the store first:  python parse.py PDFs --db {path}")
+                 f"Build the store first:  finances parse PDFs --db {path}")
     return Engine.from_source(path)
 
 
@@ -552,7 +551,7 @@ def lecture_coverage(g, cov):
                 g.dim("  I do not like taking things on trust. Parse the PDFs into the "
                       "store and I can check"),
                 g.dim("  them against the totals the bank printed:  "
-                      "python parse.py PDFs --db finances.db")]
+                      "finances parse PDFs --db finances.db")]
 
     bad, gaps = cov["mismatches"], cov["gaps"]
     if cov["trusted"]:

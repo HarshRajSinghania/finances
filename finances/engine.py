@@ -23,14 +23,14 @@ import os
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
-from database import DEFAULT_DB, FinanceDB
-from models import Statement, Transaction
-from utils import Recurring, detect_recurring, fmt_money, future_value, merchant_key
+from finances.database import DEFAULT_DB, FinanceDB
+from finances.models import Statement, Transaction
+from finances.utils import Recurring, detect_recurring, fmt_money, future_value, merchant_key
 
 # The taxonomy lives in categorizer.py; fall back to the same literals the other
 # tools use so engine.py still imports on its own.
 try:
-    from categorizer import DISCRETIONARY, ESSENTIAL, NON_SPEND, WASTE
+    from finances.categorizer import DISCRETIONARY, ESSENTIAL, NON_SPEND, WASTE
 except ImportError:                                          # pragma: no cover
     NON_SPEND = {"Payment", "Credits/Refunds", "Transfers/Cash", "Income"}
     ESSENTIAL = {"Rent/Housing", "Utilities", "Groceries", "Transport",
@@ -54,7 +54,7 @@ def load_transactions(source: str = DEFAULT_DB) -> list[Transaction]:
         return [Transaction.from_row(r) for r in rows]
     if not os.path.exists(source):
         raise SystemExit(
-            f"{source} does not exist. Build it with:  python parse.py <PDFs> --db {source}")
+            f"{source} does not exist. Build it with:  finances parse <PDFs> --db {source}")
     with FinanceDB(source) as db:
         return db.transactions()
 
@@ -390,7 +390,7 @@ def main():
     with Engine(args.db) as eng:
         n = len(eng.transactions)
         if not n:
-            print(f"{args.db} has no transactions yet. Run:  python parse.py <PDFs> --db {args.db}")
+            print(f"{args.db} has no transactions yet. Run:  finances parse <PDFs> --db {args.db}")
             return
         print(f"{n} transactions | spend {fmt_money(eng.total_spend(), 2)} | "
               f"credits {fmt_money(eng.total_credits(), 2)} | "

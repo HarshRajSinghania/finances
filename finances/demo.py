@@ -3,8 +3,8 @@
 demo.py — a year of made-up statements, so the tools can be tried before
 trusting them with real ones.
 
-    python demo.py                       # -> demo.db
-    python demo.py --db other.db --force
+    finances demo                       # -> demo.db
+    finances demo --db other.db --force
     finances web --db demo.db --open     # then look around
 
 Nobody should have to hand over their bank statements to find out whether a
@@ -32,12 +32,11 @@ import sys
 from collections import Counter
 from datetime import date, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from categorizer import Categorizer, categorize_rows  # noqa: E402
-from database import FinanceDB                        # noqa: E402
-from models import Statement, Transaction             # noqa: E402
-from parse import clean_merchant, reconcile           # noqa: E402
+from finances.categorizer import Categorizer, categorize_rows  # noqa: E402
+from finances.database import FinanceDB                        # noqa: E402
+from finances.models import Statement, Transaction             # noqa: E402
+from finances.parse import clean_merchant, reconcile           # noqa: E402
 
 DEMO_DB = "demo.db"
 PREFIX = "demo-"

@@ -2,9 +2,9 @@
 """
 api.py — a small JSON API over the finances store, for the web dashboard.
 
-    python api.py                      # serve on http://localhost:8787
-    python api.py --port 9000 --db finances.db
-    python api.py --open               # and open a browser
+    finances web                      # serve on http://localhost:8787
+    finances web --port 9000 --db finances.db
+    finances web --open               # and open a browser
 
 Written on ``http.server`` rather than Flask or FastAPI on purpose. The whole
 claim of this project is that it runs on your machine with one dependency and
@@ -47,17 +47,17 @@ import webbrowser
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+from finances.database import DEFAULT_DB, FinanceDB
+from finances.engine import Engine, NON_SPEND
+from finances.utils import merchant_key
 
-from database import DEFAULT_DB, FinanceDB          # noqa: E402
-from engine import Engine, NON_SPEND                # noqa: E402
-from utils import merchant_key                      # noqa: E402
+# The repository root: the package lives one level down, the dashboard beside it.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Both overridable so a container (or anyone running from another directory)
 # can keep the code in one place and the data in another.
-PDF_DIR = os.environ.get("FINANCES_PDF_DIR") or os.path.join(HERE, "PDFs")
-WEB_DIST = os.environ.get("FINANCES_WEB_DIST") or os.path.join(HERE, "web", "dist")
+PDF_DIR = os.environ.get("FINANCES_PDF_DIR") or os.path.join(ROOT, "PDFs")
+WEB_DIST = os.environ.get("FINANCES_WEB_DIST") or os.path.join(ROOT, "web", "dist")
 MAX_UPLOAD = 32 * 1024 * 1024          # a statement PDF is tens of KB; 32MB is generous
 
 # Names a browser may use to reach this server. Anything else in the Host header
@@ -337,7 +337,7 @@ class Api:
         """
         from collections import defaultdict
 
-        from analyze import find_anomalies
+        from finances.analyze import find_anomalies
         with self.engine() as eng:
             spend = eng.spend()
             groups = defaultdict(list)
@@ -379,9 +379,9 @@ class Api:
         csv_out = os.path.join(os.path.dirname(db_path), "cleanedData", "transactions.csv")
         with _parse_lock:
             proc = subprocess.run(
-                [sys.executable, os.path.join(HERE, "parse.py"), dest,
+                [sys.executable, "-m", "finances.parse", dest,
                  "--db", db_path, "-o", csv_out, "--force"],
-                capture_output=True, text=True,
+                capture_output=True, text=True, cwd=ROOT,
             )
         ok = proc.returncode == 0
 
@@ -592,7 +592,7 @@ def ensure_built() -> bool:
     """
     if os.path.isdir(WEB_DIST):
         return True
-    web = os.path.join(HERE, "web")
+    web = os.path.join(ROOT, "web")
     npm = shutil.which("npm")
     if not npm or not os.path.exists(os.path.join(web, "package.json")):
         return False

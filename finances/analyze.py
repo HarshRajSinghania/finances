@@ -8,11 +8,11 @@ parse.py writes, or a legacy transactions CSV. Output is two files:
     finance_dashboard.html   a single self-contained page (no internet needed)
     insights.md              the same findings as plain text
 
-    python analyze.py
-    python analyze.py --db finances.db -o dash.html --markdown insights.md
-    python analyze.py cleanedData/transactions.csv
-    python analyze.py --db finances.db --income 6200
-    python analyze.py --db finances.db --exclude-merchant "TUITION|IRS"
+    finances analyze
+    finances analyze --db finances.db -o dash.html --markdown insights.md
+    finances analyze cleanedData/transactions.csv
+    finances analyze --db finances.db --income 6200
+    finances analyze --db finances.db --exclude-merchant "TUITION|IRS"
 
 The dashboard opens with what it is allowed to claim. Engine.coverage() reports
 how many statements reconcile against their own printed totals, and that verdict
@@ -38,15 +38,14 @@ import sys
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # The read model and the shared taxonomy: one definition of "spending" for the
 # whole toolchain, re-exported by engine.py.
-from engine import DISCRETIONARY, WASTE, Engine  # noqa: E402
-from database import DEFAULT_DB  # noqa: E402
-from models import Statement  # noqa: E402
+from finances.engine import DISCRETIONARY, WASTE, Engine  # noqa: E402
+from finances.database import DEFAULT_DB  # noqa: E402
+from finances.models import Statement  # noqa: E402
 # Shared money/merchant/debt helpers — one definition for the whole toolchain.
-from utils import fmt_money as money, merchant_key, payoff_months  # noqa: E402
+from finances.utils import fmt_money as money, merchant_key, payoff_months  # noqa: E402
 
 DELIVERY = re.compile(r"doordash|uber ?eats|grubhub|seamless|postmates|caviar", re.I)
 
