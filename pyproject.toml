@@ -2,6 +2,8 @@
 name = "finances"
 version = "0.2.0"
 description = "Local-first personal finance analysis, from statement PDFs. Nothing leaves the machine."
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 # pdfplumber is the only genuine dependency, and only parse.py imports it.
 # Everything downstream is standard library, so the analysis half of the
@@ -14,7 +16,7 @@ dependencies = [
 finances = "finances.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

@@ -347,3 +347,7 @@ the project makes a network request at all.
 Arithmetic on your own statements. The forecasts are extrapolations of your past
 spending and say so, `backtest` will tell you how wrong they have been, and none
 of it knows anything about your life beyond what the statements print.
+
+# License
+
+MIT. See [LICENSE](LICENSE).
