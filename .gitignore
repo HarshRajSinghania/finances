@@ -44,3 +44,7 @@ audit.md
 # Golden files record parser output for the bundled statements, which are
 # personal. The harness regenerates them with:  python tests/run.py --update-golden
 tests/golden/
+
+# secrets, e.g. the PyPI token
+.env
+.env.*
