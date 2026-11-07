@@ -235,6 +235,7 @@ export interface Wrapped {
   biggestMonth?: { month: string; total: number }
   quietestMonth?: { month: string; total: number }
   byMonth?: { month: string; total: number }[]
+  byDay?: { date: string; total: number }[]
   weekday?: string | null
   newMerchants?: number
   merchants?: number
@@ -325,3 +326,4 @@ export interface SubscriptionReview {
   savingsPerYear: number
   savedPerYear: number
 }
+

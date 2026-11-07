@@ -126,6 +126,7 @@ def wrapped(eng: Engine, year: int | None = None) -> dict:
         "biggestMonth": {"month": top_month[0], "total": round(top_month[1], 2)},
         "quietestMonth": {"month": low_month[0], "total": round(low_month[1], 2)},
         "byMonth": [{"month": m, "total": round(by_month[m], 2)} for m in months],
+        "byDay": [{"date": d, "total": round(v, 2)} for d, v in sorted(by_day.items())],
         "weekday": calendar.day_name[max(by_weekday, key=by_weekday.get)] if by_weekday else None,
         "newMerchants": len(new_merchants),
         "merchants": len(by_merchant),

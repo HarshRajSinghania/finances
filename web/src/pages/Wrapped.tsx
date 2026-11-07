@@ -22,7 +22,9 @@ import {
 } from "lucide-react"
 import * as React from "react"
 
-import { Button } from "@/components/ui/button"
+import { ActivityHeatmap } from "@/components/easyui/ActivityHeatmap"
+import { AnimatedNumber } from "@/components/easyui/AnimatedNumber"
+import { AnimatedTabs } from "@/components/easyui/AnimatedTabs"
 import { Skeleton } from "@/components/ui/misc"
 import { EmptyState, ErrorState } from "@/components/ui/state"
 import { useApi } from "@/hooks/useApi"
@@ -96,19 +98,15 @@ function YearPicker({
 }) {
   if (years.length <= 1) return null
   return (
-    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Year">
-      {years.map((y) => (
-        <Button
-          key={y}
-          size="sm"
-          variant={y === current ? "default" : "outline"}
-          aria-pressed={y === current}
-          disabled={busy && y !== current}
-          onClick={() => onPick(y)}
-        >
-          {y}
-        </Button>
-      ))}
+    <div aria-label="Year" aria-busy={busy}>
+      <AnimatedTabs
+        variant="pill"
+        renderContent={false}
+        layoutId="wrapped-year"
+        tabs={years.map((y) => ({ id: String(y), label: String(y) }))}
+        activeTab={current != null ? String(current) : undefined}
+        onChange={(id) => onPick(Number(id))}
+      />
     </div>
   )
 }
@@ -138,7 +136,12 @@ function WrappedView({ w }: { w: WrappedData }) {
           Your {w.year} in money
         </p>
         <p className="tnum relative mt-3 text-5xl font-semibold tracking-tight sm:text-6xl">
-          {money(w.total)}
+          <AnimatedNumber
+            key={w.year}
+            value={Math.round(w.total ?? 0)}
+            prefix={money(0).replace(/[0-9.,\s]/g, "")}
+            className="font-sans text-[var(--color-ink)]"
+          />
         </p>
         <p className="relative mt-2 max-w-xl text-sm leading-relaxed text-[var(--color-ink-secondary)]">
           spent across {w.transactions?.toLocaleString()} purchases at {w.merchants} places
@@ -189,6 +192,27 @@ function WrappedView({ w }: { w: WrappedData }) {
           </div>
         )}
       </section>
+
+      {/* ------------------------------------------------ every day */}
+      {w.byDay && w.byDay.length > 0 && (
+        <section className="card p-5 sm:p-6">
+          <h2 className="text-sm font-semibold tracking-tight">Every day of {w.year}</h2>
+          <p className="mt-1 mb-4 text-xs text-[var(--color-ink-secondary)]">
+            One square a day, darker the more you spent. Hover or tap a day for its total.
+          </p>
+          <ActivityHeatmap
+            key={w.year}
+            data={w.byDay.map((d) => ({ date: d.date, value: d.total }))}
+            endDate={`${w.year}-12-31`}
+            weeks={53}
+            color="#eb6834"
+            unit="spent"
+            format={(n) => money(n)}
+            caption={`${money(w.total ?? 0)} spent in ${w.year}`}
+            ariaLabel={`Spending per day in ${w.year}`}
+          />
+        </section>
+      )}
 
       {/* ------------------------------------------------- where it went */}
       <section className="card p-5 sm:p-6">

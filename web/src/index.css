@@ -11,6 +11,23 @@
   a chart can never accidentally imply that "unverified" is just another series.
 */
 
+/*
+  `dark:` follows the same two switches as the tokens below: the in-app toggle
+  (data-theme on <html>) wins, and with no choice made the OS decides. Without
+  this, Tailwind's default would follow the OS only, and components using
+  `dark:` would ignore the toggle.
+*/
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
 @theme {
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;

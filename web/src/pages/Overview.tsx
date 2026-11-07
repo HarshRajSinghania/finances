@@ -15,6 +15,7 @@ import { Link } from "react-router-dom"
 
 import { CategoryBars } from "@/components/charts/CategoryBars"
 import { MonthlyBars } from "@/components/charts/MonthlyBars"
+import { StatCard, StatGrid } from "@/components/easyui/StatCard"
 import { Stat } from "@/components/Stat"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,7 +34,7 @@ import {
   signedMoney,
   signedPercent,
 } from "@/lib/format"
-import type { Coverage, Recurring, Summary } from "@/lib/types"
+import type { Coverage, MonthRow, Recurring, Summary } from "@/lib/types"
 
 /**
  * The landing screen.
@@ -88,6 +89,8 @@ export function Overview({
   return (
     <div className="space-y-6">
       <TrustPanel coverage={summary.coverage} />
+
+      {months.data && <LatestMonth months={months.data.months} />}
 
       <section aria-labelledby="headline-stats" className="space-y-3">
         <h2 id="headline-stats" className="sr-only">
@@ -695,4 +698,66 @@ function OverviewSkeleton() {
 function share(part: number, whole: number): number | null {
   if (!whole) return null
   return (part / whole) * 100
+}
+
+/**
+ * The newest complete month against the one before, with the run of months
+ * behind it as a sparkline you can scrub. Partial months are left out: a
+ * month the statements only half cover would always look like a saving.
+ */
+function LatestMonth({ months }: { months: MonthRow[] }) {
+  const done = months.filter((m) => m.complete).slice(-12)
+  if (done.length < 2) return null
+  const last = done[done.length - 1]
+  const prev = done[done.length - 2]
+  const labels = done.map((m) => monthName(m.month))
+  const vs = `vs ${monthName(prev.month)}`
+  const fmt = (n: number) => money(n)
+  return (
+    <section aria-labelledby="latest-month" className="space-y-3">
+      <h2 id="latest-month" className="text-sm font-semibold tracking-tight">
+        {monthName(last.month)}, the latest full month
+      </h2>
+      <StatGrid>
+        <StatCard
+          label="Spent"
+          value={last.spend}
+          previous={prev.spend}
+          trend={done.map((m) => m.spend)}
+          trendLabels={labels}
+          goodWhen="down"
+          period={vs}
+          format={fmt}
+          color="#eb6834"
+        />
+        <StatCard
+          label="Came in"
+          value={last.income}
+          previous={prev.income}
+          trend={done.map((m) => m.income)}
+          trendLabels={labels}
+          period={vs}
+          format={fmt}
+          color="#2a78d6"
+        />
+        <StatCard
+          label="Kept"
+          value={last.net}
+          previous={prev.net}
+          trend={done.map((m) => m.net)}
+          trendLabels={labels}
+          period={vs}
+          format={fmt}
+          color="#1baf7a"
+        />
+      </StatGrid>
+    </section>
+  )
+}
+
+function monthName(ym: string) {
+  return new Date(`${ym}-01T00:00:00`).toLocaleDateString("en-US", {
+    month: "short",
+    year: "numeric",
+  })
 }
