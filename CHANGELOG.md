@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1] - 2026-11-06
+
+### Changed
+- README: install from PyPI, and absolute links so images and links work on
+  the PyPI page.
+
 ## [0.3.0] - 2026-11-06
 
 ### Added

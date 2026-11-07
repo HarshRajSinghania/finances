@@ -1,6 +1,6 @@
 [project]
 name = "finances"
-version = "0.3.0"
+version = "0.3.1"
 description = "See where your money goes from your own bank statements and exports, checked against their printed totals. No bank login; nothing leaves your machine."
 license = "MIT"
 license-files = ["LICENSE"]
