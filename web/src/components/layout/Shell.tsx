@@ -4,6 +4,7 @@ import {
   FileText,
   Gauge,
   LayoutDashboard,
+  MessageSquareText,
   Monitor,
   Moon,
   Receipt,
@@ -28,6 +29,7 @@ const NAV = [
   { to: "/transactions", label: "Transactions", icon: Receipt },
   { to: "/subscriptions", label: "Subscriptions", icon: Repeat },
   { to: "/insights", label: "Insights", icon: Search },
+  { to: "/ask", label: "Ask", icon: MessageSquareText },
   { to: "/plan", label: "Budgets & goals", icon: Gauge },
   { to: "/wrapped", label: "Wrapped", icon: CalendarHeart },
 ]
@@ -168,7 +170,7 @@ export function Shell({
 
           <footer className="px-5 pb-6 sm:px-8">
             <p className="text-xs text-[var(--color-ink-muted)]">
-              Read from your own statements. Nothing here leaves this machine.
+              Read from your own statements. Nothing leaves this machine unless you use Ask.
             </p>
           </footer>
         </div>

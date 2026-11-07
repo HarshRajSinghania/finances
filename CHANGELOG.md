@@ -8,6 +8,12 @@
   tools (summary, spending by category, monthly totals, transaction search,
   subscriptions, cancel list, cash-flow forecast, check, anomalies, budgets,
   Wrapped and a guarded SQL query). Standard library only.
+- Dashboard **Ask** page: questions in plain English, answered with your own
+  Claude or OpenAI API key. The model uses the same read-only tools as the MCP
+  server, and each answer shows which ones it called. The key is kept in the
+  browser (for the tab, or on the device if you choose), and the server only
+  passes it on. `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` work as a server-side
+  fallback.
 
 ## [0.3.1] - 2026-11-06
 

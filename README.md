@@ -302,6 +302,32 @@ finances fx                       # what is set, and what is still missing
 Rows in a currency with no rate are left out of the totals and counted, and the
 dashboard says so, rather than quietly adding euros to dollars.
 
+## Ask questions in the dashboard, with your own key
+
+The dashboard's **Ask** page answers questions about your money with your own
+Claude or OpenAI API key. Pick a provider, paste a key, and ask "where did my
+money go last month?" or "which subscriptions should I cancel?". Under each
+answer you can see which lookups the model made.
+
+The model gets the same read-only tools as `finances mcp` below, so every number
+it gives you comes from your reconciled store, and it cannot change anything.
+The key stays in your browser: it is forgotten when you close the tab, unless
+you tick "Remember keys on this device". Each question carries the key to the
+local server, which passes it on to the provider and never writes it down. To
+use a key from the server instead, set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`
+before `finances web`. Setting `OPENAI_BASE_URL` points the OpenAI option at
+any server that speaks Chat Completions, such as Ollama, LM Studio, vLLM or
+OpenRouter.
+
+The model menu lists each provider's current models, taken from their own model
+pages (Claude Opus 5.5, Fable 5.1, Sonnet 5.5 and Haiku 5.5; GPT-6 Astra,
+GPT-6.1 Sol, GPT-6.1 Terra and GPT-6 Luna). "Other model ID…" takes any model
+the menu does not list yet.
+
+Your question and what the tools return (totals, merchant names, amounts) are
+sent to the provider so it can write the answer. Your statements and database
+stay on your machine.
+
 ## Ask Claude (or any AI assistant) about your money
 
 `finances mcp` lets an AI assistant read your store through
@@ -404,6 +430,7 @@ finances/          the package — one module per tool, plus the shared core bel
   engine.py        the read model every tool shares
   export.py        the store -> beancount, hledger, YNAB, Actual
   mcp_server.py    the store as read-only tools for AI assistants (MCP over stdio)
+  chat.py          the dashboard's Ask page: your own Claude or OpenAI key, read-only tools
   api.py           the dashboard's JSON API and static server
   demo.py          the made-up store
   ...              analyze, cashflow, cpi, backtest, ask, planner, anonymize, ...
@@ -501,7 +528,7 @@ rm -rf dist finances/web_dist
 uv build && uv publish
 ```
 
-298 tests, no test dependencies. The parser's golden-file tests skip when
+308 tests, no test dependencies. The parser's golden-file tests skip when
 `PDFs/` is empty, so a fresh clone runs the rest. The golden-file harness
 records per-statement extraction totals so a parser change that moves a number
 is visible:

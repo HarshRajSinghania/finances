@@ -327,3 +327,36 @@ export interface SubscriptionReview {
   savedPerYear: number
 }
 
+/* ---------------------------------------------------------------- ask */
+
+export type Provider = "anthropic" | "openai"
+
+export interface AskModel {
+  id: string
+  name: string
+}
+
+export interface AskStatus {
+  /** When the model lists were last checked against the providers' docs. */
+  checked: string
+  providers: Record<Provider, { label: string; models: AskModel[]; serverKey: boolean }>
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant"
+  content: string
+}
+
+export interface AskStep {
+  tool: string
+  input: Record<string, unknown>
+  ok: boolean
+}
+
+export interface AskReply {
+  answer: string
+  steps: AskStep[]
+  provider: Provider
+  model: string
+  usage: { input: number; output: number }
+}

@@ -33,6 +33,9 @@ Endpoints
     POST /api/budgets        {"category": "Dining", "limit": 300}  (null removes)
     POST /api/goals          {"name": "Trip", "target": 3000, "by": "2027-06"}
     POST /api/subscriptions/mark   {"key": "NETFLIX", "status": "keep"|"cancelled"|null}
+    GET  /api/ask            which providers and models the Ask page can use
+    POST /api/ask            {"provider": "anthropic", "model": ..., "key": ...,
+                              "messages": [{"role": "user", "content": "..."}]}
     DELETE /api/statements/<source_file>
     DELETE /api/goals/<name>
 
@@ -58,6 +61,7 @@ import webbrowser
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from finances import chat
 from finances.database import DEFAULT_DB, FinanceDB
 from finances.engine import Engine, NON_SPEND
 from finances.utils import merchant_key
@@ -494,6 +498,11 @@ class Api:
         save_plan(plan, PLAN_PATH)
         return self.goals({})
 
+    def ask(self, body: dict) -> dict:
+        return chat.Chat(self.db_path).ask(body.get("provider", "anthropic"),
+                                           body.get("model", ""),
+                                           body.get("messages") or [], body.get("key"))
+
     def upload(self, filename: str, blob: bytes) -> dict:
         """Save an uploaded PDF and parse it straight into the store."""
         from finances.importer import EXTENSIONS
@@ -648,6 +657,7 @@ class Handler(BaseHTTPRequestHandler):
                   "anomalies": self.api.anomalies, "wrapped": self.api.wrapped,
                   "budgets": self.api.budgets, "goals": self.api.goals,
                   "subscriptions/review": self.api.subscription_review,
+                  "ask": lambda q: chat.status(),
                   }.get(name)
             if not fn:
                 return self._send_json({"error": f"no endpoint {name}"}, 404)
@@ -670,7 +680,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._upload()
         handler = {"/api/budgets": self.api.set_budget,
                    "/api/goals": self.api.save_goal,
-                   "/api/subscriptions/mark": self.api.mark_subscription}.get(path)
+                   "/api/subscriptions/mark": self.api.mark_subscription,
+                   "/api/ask": self.api.ask}.get(path)
+        # A question carries the conversation so far, so it may be larger than a
+        # settings write. It only reads, and waits on the network for a while,
+        # so it must not hold the writer lock and stall an upload.
+        asking = path == "/api/ask"
         if not handler:
             return self._send_json({"error": "not found"}, 404)
         # A JSON content type cannot be sent cross-site without a preflight,
@@ -682,14 +697,18 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
             return self._send_json({"error": "bad Content-Length"}, 400)
-        if not 0 < length <= 64 * 1024:
+        if not 0 < length <= (512 if asking else 64) * 1024:
             return self._send_json({"error": "body missing or too large"}, 400)
         try:
             body = json.loads(self.rfile.read(length))
             if not isinstance(body, dict):
                 raise ValueError("expected a JSON object")
+            if asking:
+                return self._send_json(handler(body))
             with _parse_lock:
                 return self._send_json(handler(body))
+        except chat.ChatError as e:
+            return self._send_json({"error": str(e)}, e.status)
         except (ValueError, TypeError) as e:
             return self._send_json({"error": str(e)}, 400)
         except Exception as e:                           # noqa: BLE001

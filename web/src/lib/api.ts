@@ -7,12 +7,16 @@
 
 import type {
   Anomalies,
+  AskReply,
+  AskStatus,
   BudgetStatus,
   CategoryRow,
+  ChatMessage,
   GoalInput,
   Goals,
   Merchant,
   MonthRow,
+  Provider,
   Recurring,
   Statement,
   SubscriptionMark,
@@ -126,6 +130,16 @@ export const api = {
 
   deleteGoal: (name: string) =>
     send<Goals>("DELETE", `/goals/${encodeURIComponent(name)}`),
+
+  askStatus: () => get<AskStatus>("/ask"),
+
+  /**
+   * One question, answered by the user's own Claude or OpenAI key. The key
+   * rides along with the request to the local server, which uses it for this
+   * call and nothing else; an empty key means "use the server's own".
+   */
+  ask: (provider: Provider, model: string, key: string, messages: ChatMessage[]) =>
+    send<AskReply>("POST", "/ask", { provider, model, key, messages }),
 
   subscriptionReview: () => get<SubscriptionReview>("/subscriptions/review"),
 

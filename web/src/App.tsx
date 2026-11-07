@@ -5,6 +5,7 @@ import { ErrorState } from "@/components/ui/state"
 import { useApi } from "@/hooks/useApi"
 import { api } from "@/lib/api"
 import { setCurrency } from "@/lib/format"
+import { Ask } from "@/pages/Ask"
 import { Insights } from "@/pages/Insights"
 import { Overview } from "@/pages/Overview"
 import { Plan } from "@/pages/Plan"
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="transactions" element={<Transactions />} />
         <Route path="subscriptions" element={<Subscriptions />} />
         <Route path="insights" element={<Insights />} />
+        <Route path="ask" element={<Ask />} />
         <Route path="plan" element={<Plan />} />
         <Route path="wrapped" element={<Wrapped />} />
         <Route
