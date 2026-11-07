@@ -86,7 +86,7 @@ interface Turn extends ChatMessage {
 }
 
 export function Ask() {
-  const { data: status } = useApi(() => api.askStatus(), [])
+  const { data: status, error: statusError } = useApi(() => api.askStatus(), [])
   const [settings, setSettings] = React.useState<Settings>(loadSettings)
   const [turns, setTurns] = React.useState<Turn[]>([])
   const [draft, setDraft] = React.useState("")
@@ -144,6 +144,20 @@ export function Ask() {
         so it can read your data but never change it.
       </p>
 
+      {statusError && (
+        <p
+          role="alert"
+          className="flex gap-2 rounded-md border border-[var(--color-critical)]/30 bg-[var(--color-critical)]/5 px-3.5 py-2.5 text-sm text-[var(--color-critical)]"
+        >
+          <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>
+            {statusError.message === "no endpoint ask"
+              ? "The server running this dashboard is older than the page and has no Ask support. Stop it and run "
+              : `Could not load the model list (${statusError.message}). Try restarting `}
+            <code className="font-mono text-xs">finances web</code> again.
+          </span>
+        </p>
+      )}
       <KeySettings status={status} settings={settings} onChange={update} model={model} />
 
       <Card className="flex min-h-[28rem] flex-col">
