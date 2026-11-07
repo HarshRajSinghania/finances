@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0] - unreleased
+
+### Added
+- `finances mcp`: an MCP server, so Claude Desktop, Claude Code, Cursor and other
+  assistants can answer questions from the reconciled store. Twelve read-only
+  tools (summary, spending by category, monthly totals, transaction search,
+  subscriptions, cancel list, cash-flow forecast, check, anomalies, budgets,
+  Wrapped and a guarded SQL query). Standard library only.
+
 ## [0.3.1] - 2026-11-06
 
 ### Changed

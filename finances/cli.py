@@ -24,6 +24,7 @@ run things in. This is the front door.
     finances ask "..."           natural language, offline
     finances anonymize           make it safe to share
     finances enrich              local LLM merchant cleanup
+    finances mcp                 let Claude and other AI assistants read the store
     finances export beancount    hand the data to beancount, hledger, YNAB, Actual
 
     finances pipeline PDFs       parse, categorize and analyze in one go
@@ -63,6 +64,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "enrich":     ("llm_enrich", "clean up merchant names with a local LLM"),
     "engine":     ("engine", "the raw unified view over the store"),
     "web":        ("api", "serve the web dashboard on localhost"),
+    "mcp":        ("mcp_server", "serve the store to AI assistants over MCP (read-only)"),
     "demo":       ("demo", "write a year of made-up statements to demo.db, to try it out"),
     "pipeline":   ("", "parse, categorize and analyze in one run"),
 }

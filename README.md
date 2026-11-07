@@ -229,6 +229,7 @@ command are also environment variables:
 | `budget` | monthly limits per category; `budget cancel` for the cancel list | `finances.db` |
 | `wrapped` | your year in money | — |
 | `export beancount` | beancount, hledger/ledger, YNAB or Actual files | the file you name |
+| `mcp` | let Claude and other AI assistants read the store (read-only) | — |
 | `fx` | base currency and exchange rates | `finances.db` |
 | `audit` | a strict grandfather goes through your statements | `auditor_ledger.json` |
 | `cpi` | personal inflation, per merchant and per category | `cpi.html` |
@@ -301,6 +302,52 @@ finances fx                       # what is set, and what is still missing
 Rows in a currency with no rate are left out of the totals and counted, and the
 dashboard says so, rather than quietly adding euros to dollars.
 
+## Ask Claude (or any AI assistant) about your money
+
+`finances mcp` lets an AI assistant read your store through
+[MCP](https://modelcontextprotocol.io), so you can ask in plain English, inside
+an app you already use:
+
+- "Where did my money go in March compared to February?"
+- "Which subscriptions went up in price this year, and what would cancelling them save?"
+- "Can I afford a $2,000 trip in January without dropping below $1,000 in checking?"
+- "Draft an email disputing the duplicate $89 charge from Oct 14."
+
+The assistant calls tools like `spending_by_category`, `search_transactions`,
+`subscriptions`, `cancel_list`, `cashflow_forecast`, `anomalies`, `wrapped` and
+`check`, and answers from the reconciled numbers instead of guessing. There is
+also a read-only `query` tool that takes a SQL SELECT, with the same guard
+`finances ask` uses. Nothing it does can change your data, and getting data in
+works exactly as before: statements and exports you download yourself.
+
+**Claude Desktop:** add this to `claude_desktop_config.json` (Settings →
+Developer → Edit Config), using the absolute path to your store, then restart
+Claude:
+
+```json
+{
+  "mcpServers": {
+    "finances": {
+      "command": "uvx",
+      "args": ["finances", "mcp", "--db", "/Users/you/finances/finances.db"]
+    }
+  }
+}
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add finances -- uvx finances mcp --db /Users/you/finances/finances.db
+```
+
+Any other MCP client (Cursor, Windsurf, LM Studio, …) takes the same command.
+
+**Know where the answers go.** Your store stays on your disk, but a cloud
+assistant (Claude, ChatGPT, …) receives what each tool returns (totals,
+merchant names, amounts) in order to write its reply. To keep everything on
+your machine, use an MCP client running a local model, such as LM Studio.
+
 ## Asking questions offline
 
 `ask` needs a local model server. Without one, `--sql` and `--examples` still
@@ -356,6 +403,7 @@ finances/          the package — one module per tool, plus the shared core bel
   llm_parse.py     a local model for unknown PDF layouts, kept only if it reconciles
   engine.py        the read model every tool shares
   export.py        the store -> beancount, hledger, YNAB, Actual
+  mcp_server.py    the store as read-only tools for AI assistants (MCP over stdio)
   api.py           the dashboard's JSON API and static server
   demo.py          the made-up store
   ...              analyze, cashflow, cpi, backtest, ask, planner, anonymize, ...
@@ -453,7 +501,7 @@ rm -rf dist finances/web_dist
 uv build && uv publish
 ```
 
-289 tests, no test dependencies. The parser's golden-file tests skip when
+298 tests, no test dependencies. The parser's golden-file tests skip when
 `PDFs/` is empty, so a fresh clone runs the rest. The golden-file harness
 records per-statement extraction totals so a parser change that moves a number
 is visible:
@@ -470,7 +518,9 @@ generated dashboards and `anonymize_map.json` are all gitignored. The map file
 is what turns `MERCHANT_007` back into a real name — keep it, do not share it.
 
 `ask`, `enrich` and `parse --llm` talk only to a model server on localhost.
-Nothing else in the project makes a network request at all. See
+Nothing else in the project makes a network request at all. `finances mcp`
+makes none either, but whatever assistant you connect to it sees the results
+of the tools it calls; see [Ask Claude](#ask-claude-or-any-ai-assistant-about-your-money). See
 [SECURITY.md](https://github.com/roshanlam/finances/blob/main/SECURITY.md) for how the dashboard is locked to your own machine
 and how to report a problem.
 
