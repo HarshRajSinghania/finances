@@ -9,6 +9,7 @@ PDFs
 /data/
 # launch-video working files; the finished video lives in docs/
 /brag-output/
+/brag-output-*/
 anonymize_map.json
 finance_dashboard.html
 merchant_cache.json
