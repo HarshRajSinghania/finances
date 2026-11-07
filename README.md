@@ -1,6 +1,5 @@
 # finances
 
-[![ci](https://github.com/roshanlam/finances/actions/workflows/ci.yml/badge.svg)](https://github.com/roshanlam/finances/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/finances)](https://pypi.org/project/finances/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
