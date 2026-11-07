@@ -3,6 +3,20 @@
 ## [0.4.0] - unreleased
 
 ### Added
+- `finances.verify`, a verification engine usable from Python, plus three
+  commands: `finances verify`, `finances reconcile` and `finances evidence
+  check`.
+  - **Inputs:** statement PDFs, CSV, OFX, CAMT.053, MT940, Stripe payout
+    reconciliation and balance exports, and ledger CSVs (QuickBooks, Xero or
+    generic). Records are normalized to exact decimals and keep their source
+    location and raw values.
+  - **Checks:** statement balances, running balances, balance chains, coverage
+    gaps and overlapping downloads.
+  - **Matching:** cross-source matching in tiers (reference, exact, grouped,
+    near-miss for review), with fee-explained differences.
+  - **Output:** a reproducible evidence report (in-toto envelope, W3C PROV
+    provenance, SARIF export) that can be re-checked and re-run. See
+    docs/verification-engine.md.
 - Readers now record where each row came from: CSV row, OFX FITID, CAMT
   entry and references, MT940 entry, PDF page and line.
 - `finances mcp`: an MCP server, so Claude Desktop, Claude Code, Cursor and other

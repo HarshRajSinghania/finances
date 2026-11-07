@@ -1,0 +1,21 @@
+General Ledger
+Acme Coffee Co
+October 2026
+
+Date,Transaction Type,Num,Name,Memo/Description,Split,Amount,Balance
+Checking,,,,,,,
+10/02/2026,Payment,INV-1001,Northwind,Invoice 1001,Accounts Receivable,1200.00,6200.00
+10/03/2026,Expense,,Landlord LLC,October rent,Rent,-2000.00,4200.00
+10/06/2026,Deposit,,Stripe,Stripe payout,Sales,260.00,4460.00
+10/09/2026,Expense,,Adobe,Creative Cloud,Software,-54.99,4405.01
+10/13/2026,Deposit,,Stripe,Stripe payout,Sales,1103.50,5508.51
+10/15/2026,Payment,,Contoso,Invoice 1002,Accounts Receivable,300.00,5808.51
+10/15/2026,Payment,,Fabrikam,Invoice 1003,Accounts Receivable,150.00,5958.51
+10/20/2026,Payroll Check,,Gusto,October payroll,Payroll Expenses,-3100.00,2858.51
+10/24/2026,Expense,,Office Depot,Printer paper,Office Supplies,-42.10,2816.41
+10/28/2026,Expense,,Coffee Supply Co,Beans,Cost of Goods Sold,-86.00,2730.41
+Total for Checking,,,,,,-2269.59,
+Sales,,,,,,,
+10/06/2026,Deposit,,Stripe,Stripe payout,Checking,-260.00,-260.00
+10/13/2026,Deposit,,Stripe,Stripe payout,Checking,-1103.50,-1363.50
+Total for Sales,,,,,,-1363.50,

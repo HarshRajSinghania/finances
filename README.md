@@ -230,6 +230,9 @@ command are also environment variables:
 | `wrapped` | your year in money | — |
 | `export beancount` | beancount, hledger/ledger, YNAB or Actual files | the file you name |
 | `mcp` | let Claude and other AI assistants read the store (read-only) | — |
+| `verify` | check statements and exports on their own, with an evidence report | the JSON you name |
+| `reconcile` | match bank, processor and ledger records; explain what does not match | the JSON you name |
+| `evidence check` | re-check an evidence report: digest, input files, re-run | — |
 | `fx` | base currency and exchange rates | `finances.db` |
 | `audit` | a strict grandfather goes through your statements | `auditor_ledger.json` |
 | `cpi` | personal inflation, per merchant and per category | `cpi.html` |
@@ -301,6 +304,72 @@ finances fx                       # what is set, and what is still missing
 
 Rows in a currency with no rate are left out of the totals and counted, and the
 dashboard says so, rather than quietly adding euros to dollars.
+
+## Verify and reconcile: the engine underneath
+
+`finances.verify` is the part of this project other software can use. It reads
+bank statements and exports, Stripe payout reports and accounting ledgers, and
+checks whatever can be checked independently. It matches records across
+sources and writes an **evidence report**: every record says where it came from
+(page and line, CSV row, OFX FITID, camt reference), and every check and match
+says which rule decided it, on which inputs, with the expected and computed
+amounts.
+
+```bash
+finances reconcile --bank checking.csv --processor stripe_payouts.csv \
+                   --ledger general_ledger.csv --ledger-account Checking \
+                   --json evidence.json --sarif exceptions.sarif
+```
+
+```
+Matching
+  bank~ledger          7 matched, 1 needs_review, 3 unmatched
+  bank~processor       2 matched
+
+Needs a decision (1)
+  bank      2026-10-06      252.00 USD  STRIPE TRANSFER
+  ledger    2026-10-06      260.00 USD  Stripe payout
+  > The difference, 8.00 USD, equals the processing fees on payout po_1Q8AbcD
+    (3 transactions). The books show more than the bank received: the deposit
+    looks recorded before fees.
+```
+
+- **Matching runs in tiers:** shared references first, then exact amounts
+  within a date window (one-to-one, solved exactly), then grouped settlements
+  (a deposit that paid several invoices, a payout made of many charges). Near
+  misses come last. Those are never matched automatically: they go to review,
+  with the difference explained when something known accounts for it.
+- **Each check gets one of five statuses** (`verified`, `mismatch`,
+  `unverifiable`, `needs_review`, `incomplete`), never a single score. A CSV
+  with no balances is reported `unverifiable`, not verified.
+- **Exact money:** `Decimal` and ISO 4217 minor units, with zero tolerance
+  unless you set one.
+- **Reproducible:** the same inputs and options give the same content digest.
+  `finances evidence check evidence.json --inputs ./ --rerun` confirms the
+  report is intact, that the files still hash the same, and that re-running
+  reproduces it.
+
+The digest proves the files have not changed since the run. It does not prove
+a statement is genuine.
+
+From Python:
+
+```python
+from finances.verify import VerificationEngine
+
+eng = VerificationEngine()
+eng.add("checking.csv", role="bank")
+eng.add("stripe_payouts.csv")                    # recognised as a processor report
+eng.add("general_ledger.csv", role="ledger", account="Checking")
+report = eng.run()
+for m in report.needs_review():
+    print(m.pair, m.difference, m.explanation)
+report.save("evidence.json")
+```
+
+The research behind the design (record-linkage theory, subset-sum limits,
+W3C PROV, in-toto, SARIF, audit evidence standards) and the roadmap are in
+[docs/verification-engine.md](https://github.com/roshanlam/finances/blob/main/docs/verification-engine.md).
 
 ## Ask questions in the dashboard, with your own key
 
@@ -431,6 +500,7 @@ finances/          the package — one module per tool, plus the shared core bel
   export.py        the store -> beancount, hledger, YNAB, Actual
   mcp_server.py    the store as read-only tools for AI assistants (MCP over stdio)
   chat.py          the dashboard's Ask page: your own Claude or OpenAI key, read-only tools
+  verify/          the verification engine: adapters, checks, matching, evidence reports
   api.py           the dashboard's JSON API and static server
   demo.py          the made-up store
   ...              analyze, cashflow, cpi, backtest, ask, planner, anonymize, ...
@@ -528,7 +598,7 @@ rm -rf dist finances/web_dist
 uv build && uv publish
 ```
 
-308 tests, no test dependencies. The parser's golden-file tests skip when
+344 tests, no test dependencies. The parser's golden-file tests skip when
 `PDFs/` is empty, so a fresh clone runs the rest. The golden-file harness
 records per-statement extraction totals so a parser change that moves a number
 is visible:

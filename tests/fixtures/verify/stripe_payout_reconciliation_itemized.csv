@@ -1,0 +1,7 @@
+automatic_payout_id,automatic_payout_effective_at,balance_transaction_id,created,available_on,currency,gross,fee,net,reporting_category,description,trace_id
+po_1Q8AbcD,2026-10-06 00:00:00,txn_3Q1a,2026-10-02 10:11:12,2026-10-04 00:00:00,usd,100.00,3.00,97.00,charge,Order 1001,
+po_1Q8AbcD,2026-10-06 00:00:00,txn_3Q1b,2026-10-03 14:02:51,2026-10-05 00:00:00,usd,200.00,5.00,195.00,charge,Order 1002,
+po_1Q8AbcD,2026-10-06 00:00:00,txn_3Q1c,2026-10-04 09:30:00,2026-10-04 00:00:00,usd,-40.00,0.00,-40.00,refund,Refund for order 998,
+po_1Q9BxyZ,2026-10-13 00:00:00,txn_3Q2a,2026-10-08 16:45:10,2026-10-10 00:00:00,usd,600.00,17.70,582.30,charge,Wholesale order 77,ST-4F7KQ2
+po_1Q9BxyZ,2026-10-13 00:00:00,txn_3Q2b,2026-10-09 11:20:33,2026-10-11 00:00:00,usd,540.00,18.80,521.20,charge,Wholesale order 78,ST-4F7KQ2
+po_1QACqrs,2026-10-31 00:00:00,txn_3Q3a,2026-10-28 08:00:00,2026-10-30 00:00:00,usd,80.00,2.62,77.38,charge,Order 1010,

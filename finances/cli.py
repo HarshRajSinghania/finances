@@ -65,6 +65,9 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "engine":     ("engine", "the raw unified view over the store"),
     "web":        ("api", "serve the web dashboard on localhost"),
     "mcp":        ("mcp_server", "serve the store to AI assistants over MCP (read-only)"),
+    "verify":     ("verify.cli", "check statements and exports, with an evidence report"),
+    "reconcile":  ("verify.cli", "match bank, processor and ledger records; explain the rest"),
+    "evidence":   ("verify.cli", "re-check an evidence report: digest, inputs, re-run"),
     "demo":       ("demo", "write a year of made-up statements to demo.db, to try it out"),
     "pipeline":   ("", "parse, categorize and analyze in one run"),
 }
