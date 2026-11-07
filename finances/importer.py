@@ -86,6 +86,19 @@ class Account:
     closing: float | None = None
     checked: bool | None = None
     note: str = ""
+    # Where each row came from in the file (row number, FITID, bank reference,
+    # the amount as written), keyed by id() of the row so sorting and dropping
+    # rows cannot misalign them. Read by finances.verify for its evidence
+    # trail; the store does not keep it.
+    refs: dict = field(default_factory=dict, repr=False)
+
+    def ref(self, t: Transaction) -> dict:
+        return self.refs.get(id(t), {})
+
+    def add(self, t: Transaction, **ref) -> Transaction:
+        self.rows.append(t)
+        self.refs[id(t)] = {k: v for k, v in ref.items() if v not in (None, "", {})}
+        return t
 
 
 def _house(native: float, kind: str) -> float:
@@ -373,7 +386,10 @@ def read_csv(path: str, *, account: str = "", issuer: str = "", kind: str = "",
     if head_at is None:
         raise ValueError("no header row with a date and an amount column; "
                          "is this a transaction export?")
-    rows = [r for r in table[head_at + 1:] if any(x.strip() for x in r)]
+    rows = [(n, r) for n, r in enumerate(table[head_at + 1:], start=head_at + 2)
+            if any(x.strip() for x in r)]
+    numbers = {id(r): n for n, r in rows}
+    rows = [r for _, r in rows]
 
     def col(role, r):
         i = cols.get(role)
@@ -424,6 +440,9 @@ def read_csv(path: str, *, account: str = "", issuer: str = "", kind: str = "",
         if amt is None:
             continue
         parsed.append({
+            "record": numbers[id(r)],
+            "cells": {k: col(k, r) for k in ("date", "amount", "debit", "credit",
+                                              "balance") if k in cols},
             "date": d, "desc": desc, "raw": amt, "explicit": explicit_out,
             "post": to_date(col("post_date", r), pfmt) if pfmt else None,
             "balance": parse_amount(col("balance", r), comma) if "balance" in cols else None,
@@ -444,8 +463,10 @@ def read_csv(path: str, *, account: str = "", issuer: str = "", kind: str = "",
                    end=max(p["date"] for p in parsed), checked=checked, note=note)
     for p in chron:
         house = p["raw"] if (p["explicit"] or out_positive) else -p["raw"]
-        acct.rows.append(_txn(acct, p["date"], p["desc"], house,
-                              post=p["post"], currency=p["currency"]))
+        acct.add(_txn(acct, p["date"], p["desc"], house,
+                      post=p["post"], currency=p["currency"]),
+                 record=p["record"], raw=p["cells"],
+                 sign="as written" if (p["explicit"] or out_positive) else "inverted")
 
     bals = [p for p in chron if p["balance"] is not None]
     if bals:
@@ -581,9 +602,10 @@ def read_ofx(path: str, *, issuer: str = "", **_) -> list[Account]:
             memo = _unescape(_tag(t, "MEMO"))
             desc = nm if not memo or memo.lower() in nm.lower() else f"{nm} {memo}".strip()
             native_sum += amt
-            acct.rows.append(_txn(acct, d, desc or "(no description)", _house(amt, kind),
-                                  post=_ofx_date(_tag(t, "DTPOSTED")),
-                                  currency=acct.currency))
+            acct.add(_txn(acct, d, desc or "(no description)", _house(amt, kind),
+                          post=_ofx_date(_tag(t, "DTPOSTED")), currency=acct.currency),
+                     fitid=fitid, trntype=_tag(t, "TRNTYPE"), raw={"TRNAMT": _tag(t, "TRNAMT")},
+                     sign="inverted")
         acct.rows.sort(key=lambda t: t.date)
         ledger = re.search(r"<LEDGERBAL>(.*?)</LEDGERBAL>", body, re.S | re.I)
         if ledger:
@@ -665,7 +687,7 @@ def read_camt(path: str, *, issuer: str = "", **_) -> list[Account]:
                 if d:
                     acct.end = _ts_date(d)
         native_sum = 0.0
-        for e in st.findall("Ntry"):
+        for n_entry, e in enumerate(st.findall("Ntry"), start=1):
             status = _txt(e, "Sts") or _txt(e, "Sts/Cd")
             if status and status not in ("BOOK",):
                 continue                          # pending or informational
@@ -684,8 +706,13 @@ def read_camt(path: str, *, issuer: str = "", **_) -> list[Account]:
                 or _txt(e, "AddtlNtryInf")
             desc = re.sub(r"\s+", " ", f"{party} {purpose}").strip() or "(no description)"
             native_sum += v
-            acct.rows.append(_txt_row(acct, d, desc, v, _txt(e, "ValDt/Dt"),
-                                      cur or acct.currency))
+            refs = tx.find("Refs") if tx is not None else None
+            acct.add(_txt_row(acct, d, desc, v, _txt(e, "ValDt/Dt"), cur or acct.currency),
+                     entry=n_entry,
+                     acct_svcr_ref=_txt(e, "AcctSvcrRef") or _txt(refs, "AcctSvcrRef"),
+                     end_to_end_id=_txt(refs, "EndToEndId"),
+                     raw={"Amt": _txt(e, "Amt"), "CdtDbtInd": _txt(e, "CdtDbtInd")},
+                     sign="inverted")
         acct.rows.sort(key=lambda t: t.date)
         _close_the_books(acct, opening, native_sum, closing)
         if acct.rows:
@@ -768,13 +795,14 @@ def read_mt940(path: str, *, issuer: str = "", **_) -> list[Account]:
     opening = closing = None
     native_sum = 0.0
     pending: dict | None = None
+    n_61 = 0
 
     def finish():
         nonlocal pending
         if cur is None:
             return
         if pending:
-            cur.rows.append(_mt_row(cur, pending))
+            _mt_row(cur, pending)
             pending = None
         cur.rows.sort(key=lambda t: t.date)
         _close_the_books(cur, opening, native_sum, closing)
@@ -809,7 +837,7 @@ def read_mt940(path: str, *, issuer: str = "", **_) -> list[Account]:
                 cur.end = _mt_date(m.group(2))
         elif tag == "61":
             if pending:
-                cur.rows.append(_mt_row(cur, pending))
+                _mt_row(cur, pending)
             m = _MT_61.match(val.strip())
             if not m:
                 pending = None
@@ -831,8 +859,10 @@ def read_mt940(path: str, *, issuer: str = "", **_) -> list[Account]:
             native = -amt if m.group(3) in ("D", "RC") else amt
             native_sum += native
             rest = val[m.end():].split("\n", 1)
+            n_61 += 1
             pending = {"date": book, "post": vdate, "native": native,
-                       "desc": (rest[1] if len(rest) > 1 else "").strip()}
+                       "desc": (rest[1] if len(rest) > 1 else "").strip(),
+                       "entry": n_61, "line": rest[0].strip()}
         elif tag == "86" and pending is not None:
             pending["desc"] = _mt_description(val) or pending["desc"]
     finish()
@@ -846,8 +876,9 @@ def read_mt940(path: str, *, issuer: str = "", **_) -> list[Account]:
 
 
 def _mt_row(acct: Account, p: dict) -> Transaction:
-    return _txn(acct, p["date"], p["desc"] or "(no description)",
-                _house(p["native"], "bank"), post=p["post"], currency=acct.currency)
+    return acct.add(_txn(acct, p["date"], p["desc"] or "(no description)",
+                         _house(p["native"], "bank"), post=p["post"], currency=acct.currency),
+                    entry=p["entry"], raw={":61:": p["line"]}, sign="inverted")
 
 
 # --------------------------------------------------------------------------

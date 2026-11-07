@@ -3,6 +3,8 @@
 ## [0.4.0] - unreleased
 
 ### Added
+- Readers now record where each row came from: CSV row, OFX FITID, CAMT
+  entry and references, MT940 entry, PDF page and line.
 - `finances mcp`: an MCP server, so Claude Desktop, Claude Code, Cursor and other
   assistants can answer questions from the reconciled store. Twelve read-only
   tools (summary, spending by category, monthly totals, transaction search,

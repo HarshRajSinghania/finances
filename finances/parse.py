@@ -893,7 +893,7 @@ def parse_statement(path, password=None, amount_col="auto",
                 print(f"           amounts on the line: {[m2[1] for m2 in c['monies']]}")
 
     # ---- pass 2: emit ----
-    txns = []
+    txns, refs = [], []
     for c in cands:
         model = models[c["page"]]
         centers = model["centers"]
@@ -966,6 +966,9 @@ def parse_statement(path, password=None, amount_col="auto",
             statement_period=period,
             source_file=os.path.basename(path),
         ))
+        # Where on the page this row was read, for finances.verify's evidence.
+        refs.append({"page": c["page"] + 1, "line": c["text"],
+                     "raw": {"amount": next((str(v) for kk, v in picks if kk == k), "")}})
 
     # only consider non-transaction lines when looking for statement totals
     summary_text = "\n".join(
@@ -1059,6 +1062,7 @@ def parse_statement(path, password=None, amount_col="auto",
             "credit_share": credit_share,
             "balance_col_dropped": dropped,
             "unmatched": unmatched,
+            "refs": refs,
             "raw_text": full if want_text else None}
     return txns, meta
 
