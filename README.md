@@ -1,8 +1,8 @@
 # finances
 
 [![PyPI](https://img.shields.io/pypi/v/finances)](https://pypi.org/project/finances/)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://github.com/roshanlam/finances/blob/main/pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/roshanlam/finances/blob/main/LICENSE)
 
 See where your money goes from your own bank statements and exports. No bank
 login, no Plaid, no account linking, no cloud. Everything runs on your machine
@@ -12,7 +12,9 @@ and nothing is uploaded anywhere.
 uvx finances demo && uvx finances web --db demo.db --open    # try it on made-up data
 ```
 
-[![A 20-second tour of finances, on made-up demo data](docs/demo.gif)](docs/demo.mp4)
+or install it: `uv tool install finances` / `pipx install finances` / `pip install finances`.
+
+[![A 20-second tour of finances, on made-up demo data](https://raw.githubusercontent.com/roshanlam/finances/main/docs/demo.gif)](https://github.com/roshanlam/finances/blob/main/docs/demo.mp4)
 
 *20 seconds, on the made-up data from `finances demo`. Click for the full video with sound.*
 
@@ -42,8 +44,8 @@ reconciliation is enforced rather than assumed.
 
 # Running it
 
-Three ways in. Pick one; they all end at the same dashboard on
-`http://localhost:8787`.
+Install from PyPI, or use Docker. Either way you end up at the same dashboard
+on `http://localhost:8787`.
 
 ## Try it first, with made-up data
 
@@ -54,35 +56,40 @@ holiday spike — into a separate `demo.db`. It goes through the same
 reconciliation and categorizer as a real statement.
 
 ```bash
-# with uv, nothing to clone
+# nothing to install permanently: uvx runs it from PyPI
 uvx finances demo
 uvx finances web --db demo.db --open
 
-# or from a checkout
-git clone https://github.com/roshanlam/finances && cd finances
-uv run finances demo
-uv run finances web --db demo.db --open
-
-# or with Docker, nothing else installed
+# or with Docker
 docker compose --profile demo up demo        # then open http://localhost:8787
 ```
 
-## With your statements: uv
+## With your statements
 
-Requires [uv](https://docs.astral.sh/uv/) (it fetches Python 3.12+ if you do
-not have it). For the browser dashboard you also need Node 20+; without it
-everything in the terminal still works.
+Install it once. It needs Python 3.12+ (uv fetches it for you if needed); the
+dashboard comes prebuilt inside the package, so there is nothing else to set up.
 
 ```bash
-uv sync                                  # one dependency: pdfplumber
-mkdir -p PDFs                            # drop your statement PDFs in here
-uv run finances pipeline PDFs/           # parse, categorize, check, report
-uv run finances web --open               # builds the dashboard on first run
+uv tool install finances                 # or: pipx install finances
+                                         # or: pip install finances
+
+mkdir -p PDFs                            # drop statement PDFs and bank exports here
+finances pipeline PDFs/                  # parse, categorize, check, report
+finances import PDFs/                    # any CSV / OFX / CAMT.053 / MT940 files too
+finances web --open                      # the dashboard
 ```
+
+Upgrade with `uv tool upgrade finances` (or `pipx upgrade finances`). Your data
+is never inside the package: the store is `finances.db` in the folder you run
+from (or `FINANCES_DB`), and your statements stay wherever you put them.
 
 Any folder layout works — subfolders are searched too. Tested against Amex,
 Chase (card and checking), Capital One and Discover. For any other bank, use
-its export (next section), or let a local model read the PDF.
+its export (below), or let a local model read the PDF.
+
+**Always look at the `check` verdict at the end before trusting anything
+else.** If it does not say 100%, the numbers downstream are built on a bad
+extraction, and every other report will tell you so too.
 
 ## Any bank: CSV, OFX/QFX, CAMT.053, MT940
 
@@ -92,8 +99,8 @@ way the amounts are signed, and checks them against whatever balances the file
 carries:
 
 ```bash
-uv run finances import ~/Downloads/activity.csv
-uv run finances import exports/                 # a whole folder, any mix of formats
+finances import ~/Downloads/activity.csv
+finances import exports/                 # a whole folder, any mix of formats
 ```
 
 | Format | Who exports it | How it is checked |
@@ -114,7 +121,7 @@ counted twice. If a CSV is ambiguous, say so: `--sign out-negative`,
 ## A bank the parser does not know: a local model, checked
 
 ```bash
-uv run finances parse PDFs/ --llm
+finances parse PDFs/ --llm
 ```
 
 When a statement's layout is not understood (nothing extracted, or the
@@ -126,11 +133,7 @@ if they add up to those totals. Otherwise they are discarded and the statement
 stays marked as a mismatch. `FINANCES_LLM_FALLBACK=1` turns this on for the
 dashboard's uploads too.
 
-**Always look at the `check` verdict at the end before trusting anything
-else.** If it does not say 100%, the numbers downstream are built on a bad
-extraction, and every other report will tell you so too.
-
-## With your statements: Docker
+## With Docker
 
 ```bash
 mkdir -p PDFs                            # drop your statement PDFs in here
@@ -174,29 +177,25 @@ The server makes no outbound requests, binds to localhost, and refuses any
 request that does not come from a page on localhost — so another website open
 in the same browser cannot read your transactions from it.
 
-While working on the frontend, run the two halves separately —
-`uv run finances web` in one terminal, `cd web && npm run dev` in another, then
-use `http://localhost:5173` (it proxies `/api` through).
+Working on the code itself? See [Developing](#developing) below.
 
 ## Or stay in the terminal
 
 ```bash
-uv run finances analyze            # where the money went
-uv run finances wrapped            # your year in money
-uv run finances budget             # this month against your limits
-uv run finances budget cancel      # the subscriptions worth cancelling
-uv run finances cashflow           # the next 60 days
-uv run finances audit              # the reckoning
-uv run finances cpi                # your own inflation rate
-uv run finances backtest           # how accurate are the forecasts
-uv run finances ask "how much did I spend on coffee in March"
+finances analyze            # where the money went
+finances wrapped            # your year in money
+finances budget             # this month against your limits
+finances budget cancel      # the subscriptions worth cancelling
+finances cashflow           # the next 60 days
+finances audit              # the reckoning
+finances cpi                # your own inflation rate
+finances backtest           # how accurate are the forecasts
+finances ask "how much did I spend on coffee in March"
 ```
 
-`uv run finances` on its own lists every command; `uv run finances <command>
---help` shows that tool's own options. Inside an activated virtualenv
-(`source .venv/bin/activate`), drop the `uv run`. Without uv at all:
-`python3 -m venv .venv && .venv/bin/pip install -e .` and then
-`.venv/bin/finances`.
+`finances` on its own lists every command; `finances <command> --help` shows
+that tool's own options. If you did not install it, put `uvx` in front of any
+command: `uvx finances check`.
 
 ## Configuration
 
@@ -244,30 +243,30 @@ command are also environment variables:
 Every command accepts either the SQLite store or a CSV, interchangeably:
 
 ```bash
-uv run finances analyze --db finances.db
-uv run finances analyze cleanedData/transactions.csv
+finances analyze --db finances.db
+finances analyze cleanedData/transactions.csv
 ```
 
 ## Things you will probably need
 
 ```bash
 # Encrypted PDFs
-uv run finances parse PDFs/ --password 1234
+finances parse PDFs/ --password 1234
 
 # A statement extracted wrong — see what the parser saw
-uv run finances parse "PDFs/one bad file.pdf" --dump-columns
+finances parse "PDFs/one bad file.pdf" --dump-columns
 
 # Fail the build if anything does not reconcile (for a cron job)
-uv run finances check --strict
+finances check --strict
 
 # Re-parse everything, ignoring the cache
-uv run finances parse PDFs/ --force
+finances parse PDFs/ --force
 
 # Tell it your take-home pay, so it can work out what is left over
-uv run finances analyze --income 6200
+finances analyze --income 6200
 
 # Teach the categorizer, biggest money first
-uv run finances categorize review
+finances categorize review
 ```
 
 ## Hand it to the tool you already use
@@ -276,10 +275,10 @@ This gets complete, checked transactions out of statements. Budgeting apps and
 plain-text ledgers are better at other things, so it hands the rows over:
 
 ```bash
-uv run finances export beancount -o money.beancount --balances
-uv run finances export hledger   -o money.journal   --balances   # ledger-cli reads it too
-uv run finances export ynab      -o exports/        # one CSV per account
-uv run finances export actual    -o exports/
+finances export beancount -o money.beancount --balances
+finances export hledger   -o money.journal   --balances   # ledger-cli reads it too
+finances export ynab      -o exports/        # one CSV per account
+finances export actual    -o exports/
 ```
 
 With `--balances`, every reconciled statement's closing balance becomes a
@@ -294,9 +293,9 @@ base currency, at rates you set — there is no rate feed, because nothing here
 goes online:
 
 ```bash
-uv run finances fx --base EUR            # report in euros
-uv run finances fx USD=0.92 GBP=1.17     # 1 USD is 0.92 of the base currency
-uv run finances fx                       # what is set, and what is still missing
+finances fx --base EUR            # report in euros
+finances fx USD=0.92 GBP=1.17     # 1 USD is 0.92 of the base currency
+finances fx                       # what is set, and what is still missing
 ```
 
 Rows in a currency with no rate are left out of the totals and counted, and the
@@ -308,15 +307,15 @@ dashboard says so, rather than quietly adding euros to dollars.
 work:
 
 ```bash
-uv run finances ask --examples
-uv run finances ask --sql "SELECT category, SUM(amount) FROM transactions GROUP BY 1 ORDER BY 2 DESC"
+finances ask --examples
+finances ask --sql "SELECT category, SUM(amount) FROM transactions GROUP BY 1 ORDER BY 2 DESC"
 ```
 
 With one:
 
 ```bash
 brew install ollama && ollama pull llama3.1:8b
-uv run finances ask "what did I spend on delivery last month" --explain
+finances ask "what did I spend on delivery last month" --explain
 ```
 
 Something in the 3B–8B range is plenty. Avoid reasoning models here — they take
@@ -425,16 +424,33 @@ Scored against 159 real-shaped descriptors with processor prefixes, glued
 city/state suffixes and issuer preambles:
 
 ```
-$ uv run finances categorize eval
+$ finances categorize eval
   correct         159  100.0%
   wrong             0    0.0%   <- these corrupt analysis
   left unknown      0    0.0%   <- these are honest
 ```
 
-# Tests
+# Developing
 
 ```bash
+git clone https://github.com/roshanlam/finances && cd finances
+uv sync                                  # editable install into .venv
+uv run finances demo                     # `uv run` uses the checkout's code
 uv run python -m unittest discover tests
+```
+
+In a checkout the dashboard needs Node 20+: `uv run finances web` builds it on
+first run. While working on the frontend, run `uv run finances web` in one
+terminal and `cd web && npm run dev` in another, then use
+`http://localhost:5173` (it proxies `/api` through).
+
+Releasing a new version:
+
+```bash
+# bump `version` in pyproject.toml and add a CHANGELOG.md entry, then
+rm -rf dist finances/web_dist
+(cd web && npm ci && npm run build) && cp -r web/dist finances/web_dist
+uv build && uv publish
 ```
 
 289 tests, no test dependencies. The parser's golden-file tests skip when
@@ -455,7 +471,7 @@ is what turns `MERCHANT_007` back into a real name — keep it, do not share it.
 
 `ask`, `enrich` and `parse --llm` talk only to a model server on localhost.
 Nothing else in the project makes a network request at all. See
-[SECURITY.md](SECURITY.md) for how the dashboard is locked to your own machine
+[SECURITY.md](https://github.com/roshanlam/finances/blob/main/SECURITY.md) for how the dashboard is locked to your own machine
 and how to report a problem.
 
 # Not financial advice
@@ -466,4 +482,4 @@ of it knows anything about your life beyond what the statements print.
 
 # License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/roshanlam/finances/blob/main/LICENSE).
