@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.4.0] - unreleased
+## [0.4.0] - 2026-11-07
 
 ### Added
 - `finances.verify`, a verification engine usable from Python, plus three
