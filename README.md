@@ -16,8 +16,6 @@ or install it: `uv tool install finances` / `pipx install finances` / `pip insta
 
 [![A 20-second tour of finances 0.4: asking questions, reconciling bank, Stripe and books, re-checkable evidence](https://raw.githubusercontent.com/roshanlam/finances/main/docs/demo.gif)](https://github.com/roshanlam/finances/blob/main/docs/demo.mp4)
 
-*20 seconds of 0.4, all on made-up data: the `finances demo` store and the reconciliation test fixtures. Click for the full video with sound.*
-
 The thing that makes it different: **a statement prints its own totals, so the
 extraction can be proved correct.** Every figure this produces traces back to a
 line on a statement, and the tool tells you when it cannot.
