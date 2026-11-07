@@ -9,14 +9,19 @@ API expects, and the key goes nowhere but the provider's header.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import threading
 import unittest
+from http.server import ThreadingHTTPServer
 from unittest import mock
 
 import support
 
-from finances.chat import MAX_ROUNDS, Chat, ChatError, status
+from finances import api, chat
+from finances.chat import (CONTEXT_MESSAGES, MAX_HISTORY, MAX_ROUNDS, Chat, ChatError,
+                           forget, history, remember, status)
 from finances.database import FinanceDB
 from finances.mcp_server import TOOLS
 
@@ -192,6 +197,138 @@ class ChatTest(support.TempDirMixin, unittest.TestCase):
     def test_unknown_provider(self):
         with self.assertRaises(ChatError):
             Chat(self.path, post=FakeProvider()).ask("gemini", "", ASK, key="k")
+
+
+class LocalModelTest(support.TempDirMixin, unittest.TestCase):
+    """A model on this machine: no key, tools when it has them, figures when not."""
+
+    FOUND = {"found": True, "endpoint": "http://localhost:11434/v1", "server": "Ollama",
+             "models": [{"id": "qwen3.5:latest", "name": "qwen3.5:latest (9.7B)"}]}
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.tmp_path("l.db")
+        with FinanceDB(self.path) as db:
+            db.upsert_transactions([
+                support.txn("2026-03-10", 4.50, "BLUE BOTTLE", category="Coffee"),
+                support.txn("2026-04-10", 5.25, "BLUE BOTTLE", category="Coffee")])
+        patch = mock.patch.object(chat, "local_models", return_value=self.FOUND)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_tools_with_no_key(self):
+        fake = FakeProvider(compatible_tool("summary", {}),
+                            compatible_text("<think>adding up</think>You spent $9.75."))
+        out = Chat(self.path, post=fake).ask("local", "", ASK)
+        self.assertEqual(out["answer"], "You spent $9.75.")          # reasoning stripped
+        self.assertEqual(out["model"], "qwen3.5:latest")
+        self.assertEqual(fake.requests[0]["url"], "http://localhost:11434/v1/chat/completions")
+        self.assertIn("tools", fake.requests[0]["body"])
+
+    def test_a_model_without_tools_gets_the_figures_instead(self):
+        calls = []
+
+        def post(url, body, headers, timeout=120.0):
+            calls.append(body)
+            if "tools" in body:
+                raise ChatError("localhost answered 400: qwen:0.5b does not support tools", 502)
+            return compatible_text("Coffee was $9.75 over two months.")
+
+        out = Chat(self.path, post=post).ask("local", "qwen:0.5b", ASK)
+        self.assertEqual(out["answer"], "Coffee was $9.75 over two months.")
+        self.assertEqual([s["tool"] for s in out["steps"]][:2], ["summary", "monthly_totals"])
+        system = calls[-1]["messages"][0]["content"]
+        self.assertIn("cannot call tools", system)
+        self.assertIn("9.75", system)
+        self.assertNotIn("tools", calls[-1])
+
+    def test_other_errors_are_not_hidden(self):
+        def post(url, body, headers, timeout=120.0):
+            raise ChatError("could not reach localhost: connection refused", 502)
+        with self.assertRaisesRegex(ChatError, "connection refused"):
+            Chat(self.path, post=post).ask("local", "", ASK)
+
+    def test_no_server_says_how_to_start_one(self):
+        with mock.patch.object(chat, "local_models", return_value={"found": False}):
+            with self.assertRaisesRegex(ChatError, "ollama serve"):
+                Chat(self.path, post=FakeProvider()).ask("local", "", ASK)
+
+    def test_only_servers_on_this_network(self):
+        self.assertEqual(chat._local_endpoint("http://127.0.0.1:11434/v1/"),
+                         "http://127.0.0.1:11434/v1")
+        self.assertEqual(chat._local_endpoint("http://192.168.1.20:1234/v1"),
+                         "http://192.168.1.20:1234/v1")
+        for bad in ("http://8.8.8.8:11434/v1", "ftp://localhost/v1", "localhost:11434"):
+            with self.subTest(url=bad), self.assertRaises(ChatError):
+                chat._local_endpoint(bad)
+
+    def test_status_needs_no_key_for_local(self):
+        self.assertTrue(status()["providers"]["local"]["serverKey"])
+
+
+class HistoryTest(support.TempDirMixin, unittest.TestCase):
+    REPLY = {"answer": "You spent $9.75.", "steps": [{"tool": "summary", "input": {}, "ok": True}],
+             "provider": "anthropic", "model": "claude-opus-5-5", "usage": {}}
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.tmp_path("h.db")
+        with FinanceDB(self.path) as db:
+            db.upsert_transactions([support.txn("2026-03-10", 4.50, "BLUE BOTTLE")])
+
+    def test_answered_questions_are_kept_and_can_be_deleted(self):
+        self.assertEqual(history(self.path), [])
+        remember(self.path, "coffee?", self.REPLY)
+        turns = history(self.path)
+        self.assertEqual([(t["role"], t["content"]) for t in turns],
+                         [("user", "coffee?"), ("assistant", "You spent $9.75.")])
+        self.assertEqual(turns[1]["steps"][0]["tool"], "summary")
+        forget(self.path)
+        self.assertEqual(history(self.path), [])
+
+    def test_history_is_capped(self):
+        for i in range(MAX_HISTORY):
+            remember(self.path, f"q{i}", self.REPLY)
+        turns = history(self.path)
+        self.assertEqual(len(turns), MAX_HISTORY)
+        self.assertEqual(turns[-2]["content"], f"q{MAX_HISTORY - 1}")
+
+    def test_only_recent_turns_go_to_the_model(self):
+        long = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"}
+                for i in range(41)]
+        fake = FakeProvider(anthropic_text("ok"))
+        Chat(self.path, post=fake).ask("anthropic", "", long, key="k")
+        sent = fake.requests[0]["body"]["messages"]
+        self.assertLessEqual(len(sent), CONTEXT_MESSAGES)
+        self.assertEqual((sent[0]["role"], sent[-1]["content"]), ("user", "m40"))
+
+    def test_the_api_saves_answers_and_deletes_on_request(self):
+        a = api.Api(self.path)
+        with mock.patch.object(chat.Chat, "ask", return_value=self.REPLY):
+            a.ask({"provider": "anthropic", "key": "k", "messages": ASK})
+        self.assertEqual(len(history(self.path)), 2)
+
+        api.Handler.api = a
+        api.Handler.log_message = lambda *x, **k: None
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+
+        def req(method, origin=None):
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=5)
+            conn.request(method, "/api/ask/history", headers={
+                "Host": "localhost", **({"Origin": origin} if origin else {})})
+            res = conn.getresponse()
+            body = json.loads(res.read())
+            conn.close()
+            return res.status, body
+
+        self.assertEqual(len(req("GET")[1]["turns"]), 2)
+        self.assertEqual(req("DELETE", "https://attacker.example")[0], 403)
+        self.assertEqual(len(history(self.path)), 2)
+        self.assertEqual(req("DELETE", "http://localhost:8787"), (200, {"turns": []}))
+        self.assertEqual(history(self.path), [])
 
 
 if __name__ == "__main__":

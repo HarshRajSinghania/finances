@@ -7,6 +7,8 @@
 
 import type {
   Anomalies,
+  AskHistory,
+  AskLocal,
   AskReply,
   AskStatus,
   BudgetStatus,
@@ -138,8 +140,17 @@ export const api = {
    * rides along with the request to the local server, which uses it for this
    * call and nothing else; an empty key means "use the server's own".
    */
-  ask: (provider: Provider, model: string, key: string, messages: ChatMessage[]) =>
-    send<AskReply>("POST", "/ask", { provider, model, key, messages }),
+  ask: (provider: Provider, model: string, key: string, messages: ChatMessage[],
+        endpoint?: string) =>
+    send<AskReply>("POST", "/ask", { provider, model, key, messages, endpoint }),
+
+  /** Look for a local model server (Ollama, LM Studio, …), or check the one named. */
+  askLocal: (endpoint?: string) => get<AskLocal>("/ask/local", { endpoint }),
+
+  /** The saved conversation: every answered question, kept with the data. */
+  askHistory: () => get<AskHistory>("/ask/history"),
+
+  clearAskHistory: () => send<AskHistory>("DELETE", "/ask/history"),
 
   subscriptionReview: () => get<SubscriptionReview>("/subscriptions/review"),
 

@@ -34,6 +34,9 @@ Endpoints
     POST /api/goals          {"name": "Trip", "target": 3000, "by": "2027-06"}
     POST /api/subscriptions/mark   {"key": "NETFLIX", "status": "keep"|"cancelled"|null}
     GET  /api/ask            which providers and models the Ask page can use
+    GET  /api/ask/local      a local model server and its models (?endpoint=…)
+    GET  /api/ask/history    the saved conversation
+    DELETE /api/ask/history  forget it
     POST /api/ask            {"provider": "anthropic", "model": ..., "key": ...,
                               "messages": [{"role": "user", "content": "..."}]}
     DELETE /api/statements/<source_file>
@@ -499,9 +502,14 @@ class Api:
         return self.goals({})
 
     def ask(self, body: dict) -> dict:
-        return chat.Chat(self.db_path).ask(body.get("provider", "anthropic"),
-                                           body.get("model", ""),
-                                           body.get("messages") or [], body.get("key"))
+        messages = body.get("messages") or []
+        reply = chat.Chat(self.db_path).ask(body.get("provider", "anthropic"),
+                                            body.get("model", ""), messages, body.get("key"),
+                                            body.get("endpoint") or None)
+        # The network call runs without the writer lock; saving takes it.
+        with _parse_lock:
+            chat.remember(self.db_path, str(messages[-1].get("content", "")), reply)
+        return reply
 
     def upload(self, filename: str, blob: bytes) -> dict:
         """Save an uploaded PDF and parse it straight into the store."""
@@ -658,6 +666,8 @@ class Handler(BaseHTTPRequestHandler):
                   "budgets": self.api.budgets, "goals": self.api.goals,
                   "subscriptions/review": self.api.subscription_review,
                   "ask": lambda q: chat.status(),
+                  "ask/history": lambda q: {"turns": chat.history(self.api.db_path)},
+                  "ask/local": lambda q: chat.local_models(q.get("endpoint") or None),
                   }.get(name)
             if not fn:
                 return self._send_json({"error": f"no endpoint {name}"}, 404)
@@ -665,6 +675,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(fn(q))
             except SystemExit as e:
                 return self._send_json({"error": str(e)}, 400)
+            except chat.ChatError as e:
+                return self._send_json({"error": str(e)}, e.status)
             except Exception as e:                       # noqa: BLE001
                 import traceback
                 traceback.print_exc()
@@ -744,6 +756,8 @@ class Handler(BaseHTTPRequestHandler):
             fn, arg = self.api.delete_statement, path[len("/api/statements/"):]
         elif path.startswith("/api/goals/"):
             fn, arg = self.api.delete_goal, path[len("/api/goals/"):]
+        elif path == "/api/ask/history":
+            fn, arg = (lambda _: (chat.forget(self.api.db_path), {"turns": []})[1]), None
         else:
             return self._send_json({"error": "not found"}, 404)
         try:

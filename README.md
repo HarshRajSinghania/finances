@@ -374,7 +374,7 @@ W3C PROV, in-toto, SARIF, audit evidence standards) and the roadmap are in
 ## Ask questions in the dashboard, with your own key
 
 The dashboard's **Ask** page answers questions about your money with your own
-Claude or OpenAI API key. Pick a provider, paste a key, and ask "where did my
+Claude or OpenAI API key, or with a model running on your own computer. Pick a provider, paste a key, and ask "where did my
 money go last month?" or "which subscriptions should I cancel?". Under each
 answer you can see which lookups the model made.
 
@@ -393,8 +393,19 @@ pages (Claude Opus 5.5, Fable 5.1, Sonnet 5.5 and Haiku 5.5; GPT-6 Astra,
 GPT-6.1 Sol, GPT-6.1 Terra and GPT-6 Luna). "Other model ID…" takes any model
 the menu does not list yet.
 
-Your question and what the tools return (totals, merchant names, amounts) are
-sent to the provider so it can write the answer. Your statements and database
+The conversation is kept with your data, so it is still there when you come
+back; the trash button under it deletes it, after asking once. Only the most
+recent turns are sent with each new question.
+
+**Local model:** pick "Local model" and the page finds Ollama, LM Studio, a
+llama.cpp server or vLLM on this machine (or type its address), and lists the
+models it serves. No key is needed and nothing leaves your network; addresses
+outside it are refused. A model that cannot call tools still answers: the main
+figures are looked up first and handed to it with the question. Local models
+are slower; a 10B model takes about 15–20 seconds on a recent laptop.
+
+With Claude or OpenAI, your question and what the tools return (totals,
+merchant names, amounts) are sent to the provider so it can write the answer. Your statements and database
 stay on your machine.
 
 ## Ask Claude (or any AI assistant) about your money

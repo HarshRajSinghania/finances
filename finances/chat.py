@@ -12,6 +12,11 @@ of each tool the model calls — totals, merchant names, amounts. Statement PDFs
 and the database file stay here. The key is used for the one request it came
 with; the server never writes it anywhere.
 
+Or a local model: anything that speaks the OpenAI API on this machine or the
+local network (Ollama, LM Studio, llama.cpp, vLLM). No key, and nothing leaves
+the network. A model that cannot call tools still gets an answer: the main
+figures are looked up first and handed to it with the question.
+
 The key comes from the page (the dashboard keeps it in the browser) or, if the
 page sends none, from ANTHROPIC_API_KEY / OPENAI_API_KEY in the server's
 environment. OPENAI_BASE_URL points the OpenAI side at any compatible server.
@@ -21,8 +26,11 @@ Standard library only.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -49,13 +57,19 @@ PROVIDERS = {
         {"id": "gpt-6.1-terra", "name": "GPT-6.1 Terra"},
         {"id": "gpt-6-luna", "name": "GPT-6 Luna"},
     ]},
+    # Models come from the server itself: see local_models().
+    "local": {"label": "Local model", "env": "", "models": []},
 }
+LOCAL_TIMEOUT = 600.0       # a large model on a laptop can take minutes
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 OPENAI_URL = "https://api.openai.com/v1"
 MAX_ROUNDS = 8              # tool calls before it has to answer with what it has
 MAX_TOOL_TEXT = 24_000      # characters of one tool result handed back to the model
 MAX_TOKENS = 4096
+CONTEXT_MESSAGES = 20       # the conversation the model sees: recent turns only
+HISTORY_KEY = "ask_history"
+MAX_HISTORY = 200           # turns kept in the store
 
 SYSTEM = INSTRUCTIONS + (
     "\n\nYou are answering inside the user's finance dashboard. Today is {today}. "
@@ -63,6 +77,40 @@ SYSTEM = INSTRUCTIONS + (
     "up. Answer in a few short sentences or a short bulleted list, leading with "
     "the answer. Plain text with **bold** and '- ' bullets only: no tables, no "
     "headings. If the data cannot answer the question, say what is missing.")
+
+
+# --------------------------------------------------------------------------
+# The conversation, kept with the data
+# --------------------------------------------------------------------------
+#
+# Saved in the store's settings table, like budgets and cancel-list marks, so it
+# is there after a reload, a restart or another browser, and it goes when the
+# person deletes it. Only answered questions are kept; failures are not.
+
+def history(db_path: str) -> list[dict]:
+    from finances.database import FinanceDB
+    with FinanceDB(db_path) as db:
+        turns = db.get_setting(HISTORY_KEY, [])
+    return turns if isinstance(turns, list) else []
+
+
+def remember(db_path: str, question: str, reply: dict) -> None:
+    from finances.database import FinanceDB
+    from datetime import datetime, timezone
+    at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with FinanceDB(db_path) as db:
+        turns = db.get_setting(HISTORY_KEY, [])
+        turns = turns if isinstance(turns, list) else []
+        turns += [{"role": "user", "content": question, "at": at},
+                  {"role": "assistant", "content": reply["answer"], "at": at,
+                   "steps": reply["steps"], "model": reply["model"]}]
+        db.set_setting(HISTORY_KEY, turns[-MAX_HISTORY:])
+
+
+def forget(db_path: str) -> None:
+    from finances.database import FinanceDB
+    with FinanceDB(db_path) as db:
+        db.set_setting(HISTORY_KEY, None)
 
 
 class ChatError(Exception):
@@ -77,8 +125,47 @@ def status() -> dict:
     """What the page needs to draw the settings: providers, models, server keys."""
     return {"checked": MODELS_CHECKED,
             "providers": {name: {"label": p["label"], "models": p["models"],
-                                 "serverKey": bool(os.environ.get(p["env"]))}
+                                 "serverKey": name == "local" or bool(os.environ.get(p["env"]))}
                           for name, p in PROVIDERS.items()}}
+
+
+def _local_endpoint(url: str) -> str:
+    """Only servers on this machine or the local network count as local.
+
+    The page can name any URL; without this, "local model" could quietly send
+    the numbers to a server on the internet. Hosted OpenAI-compatible services
+    belong under the OpenAI option, with OPENAI_BASE_URL.
+    """
+    p = urllib.parse.urlparse((url or "").strip())
+    if p.scheme not in ("http", "https") or not p.hostname:
+        raise ChatError(f"not a server address: {url!r} (try http://localhost:11434/v1)")
+    try:
+        ips = {ipaddress.ip_address(i[4][0].split("%")[0])
+               for i in socket.getaddrinfo(p.hostname, p.port or 80)}
+    except (socket.gaierror, ValueError):
+        raise ChatError(f"cannot find {p.hostname} on this network") from None
+    if not ips or not all(ip.is_loopback or ip.is_private or ip.is_link_local for ip in ips):
+        raise ChatError(f"{p.hostname} is not on this machine or your local network; "
+                        "for a hosted server use the OpenAI option with OPENAI_BASE_URL")
+    return url.strip().rstrip("/")
+
+
+def local_models(endpoint: str | None = None) -> dict:
+    """The local server and its chat models, the one that fits this machine first."""
+    from finances.llm_enrich import choose_model, detect_device, discover
+    if endpoint:
+        endpoint = _local_endpoint(endpoint)
+    base, models, label = discover(endpoint)
+    if not base:
+        return {"found": False, "endpoint": endpoint or "", "server": "", "models": []}
+    chat_models = [m for m in models if not re.search(r"embed|rerank|whisper", m["name"], re.I)]
+    pick, *_ = choose_model(chat_models, detect_device().get("ram"), 70.0, "largest", False)
+    chat_models.sort(key=lambda m: (m is not pick, m["name"]))
+    return {"found": True, "endpoint": base, "server": label,
+            "models": [{"id": m["name"],
+                        "name": m["name"].removesuffix(":latest")
+                        + (f" · {m['params']:g}B" if m.get("params") else "")}
+                       for m in chat_models]}
 
 
 def _post(url: str, body: dict, headers: dict, timeout: float = 120.0) -> dict:
@@ -117,25 +204,48 @@ class Chat:
         return text, not out.get("isError")
 
     def ask(self, provider: str, model: str, messages: list[dict],
-            key: str | None = None) -> dict:
+            key: str | None = None, endpoint: str | None = None) -> dict:
         if provider not in PROVIDERS:
             raise ChatError(f"provider must be one of {', '.join(PROVIDERS)}")
-        key = (key or "").strip() or os.environ.get(PROVIDERS[provider]["env"], "")
-        if not key:
-            raise ChatError(f"add your {PROVIDERS[provider]['label']} API key first")
-        model = (model or "").strip() or PROVIDERS[provider]["models"][0]["id"]
+        if provider == "local":
+            found = local_models(endpoint)
+            if not found["found"]:
+                raise ChatError("no local model server answered"
+                                + (f" at {endpoint}" if endpoint else "")
+                                + ". Start Ollama (ollama serve) or LM Studio's local "
+                                  "server, or give its address.", 502)
+            model = (model or "").strip() or (found["models"] or [{"id": ""}])[0]["id"]
+            if not model:
+                raise ChatError(f"{found['server']} has no chat model; pull one first "
+                                "(for example: ollama pull qwen3.5)")
+            key = "local"
+        else:
+            key = (key or "").strip() or os.environ.get(PROVIDERS[provider]["env"], "")
+            if not key:
+                raise ChatError(f"add your {PROVIDERS[provider]['label']} API key first")
+            model = (model or "").strip() or PROVIDERS[provider]["models"][0]["id"]
         history = [{"role": m["role"], "content": str(m["content"])}
                    for m in messages or []
                    if isinstance(m, dict) and m.get("role") in ("user", "assistant")
                    and str(m.get("content") or "").strip()]
         if not history or history[-1]["role"] != "user":
             raise ChatError("ask a question")
+        # A long saved conversation stays on the page, but only its recent turns
+        # go to the provider: older ones cost tokens and rarely change the answer.
+        history = history[-CONTEXT_MESSAGES:]
+        while history[0]["role"] != "user":
+            history = history[1:]
         system = SYSTEM.format(today=date.today().isoformat())
         if provider == "anthropic":
-            run = self._anthropic
+            answer, steps, usage = self._anthropic(model, key, system, history)
+        elif provider == "local":
+            answer, steps, usage = self._local(found["endpoint"], model, system, history)
+        elif os.environ.get("OPENAI_BASE_URL"):
+            answer, steps, usage = self._openai_compatible(
+                model, key, system, history, os.environ["OPENAI_BASE_URL"])
         else:
-            run = self._openai_compatible if os.environ.get("OPENAI_BASE_URL") else self._openai
-        answer, steps, usage = run(model, key, system, history)
+            answer, steps, usage = self._openai(model, key, system, history)
+        answer = _THINK.sub("", answer or "")
         return {"answer": answer.strip(), "steps": steps, "provider": provider,
                 "model": model, "usage": usage}
 
@@ -215,8 +325,8 @@ class Chat:
     # -- Chat Completions, for OPENAI_BASE_URL servers ----------------------
     # Most OpenAI-compatible servers (Ollama, LM Studio, vLLM, OpenRouter) speak
     # Chat Completions and not the Responses API.
-    def _openai_compatible(self, model, key, system, history):
-        base = os.environ["OPENAI_BASE_URL"].rstrip("/")
+    def _openai_compatible(self, model, key, system, history, base, timeout=120.0):
+        base = base.rstrip("/")
         tools = [{"type": "function", "function": {"name": n, "description": d,
                                                    "parameters": s}}
                  for n, d, s in TOOLS]
@@ -224,10 +334,12 @@ class Chat:
         messages = [{"role": "system", "content": system}, *history]
         steps, usage = [], {"input": 0, "output": 0}
         for round_ in range(MAX_ROUNDS + 1):
-            body = {"model": model, "messages": messages, "max_tokens": MAX_TOKENS}
+            body = {"model": model, "messages": messages, "stream": False}
+            if timeout <= 120:
+                body["max_tokens"] = MAX_TOKENS
             if round_ < MAX_ROUNDS:
                 body["tools"] = tools
-            out = self.post(f"{base}/chat/completions", body, headers)
+            out = self.post(f"{base}/chat/completions", body, headers, timeout)
             u = out.get("usage") or {}
             usage["input"] += u.get("prompt_tokens", 0)
             usage["output"] += u.get("completion_tokens", 0)
@@ -248,5 +360,53 @@ class Chat:
                     args = {}
                 text, ok = self.run_tool(fn.get("name", ""), args)
                 steps.append({"tool": fn.get("name", ""), "input": args, "ok": ok})
-                messages.append({"role": "tool", "tool_call_id": c["id"], "content": text})
+                messages.append({"role": "tool", "tool_call_id": c.get("id", ""),
+                                 "content": text})
         raise ChatError("the model kept calling tools without answering", 502)
+
+    # -- a model on this machine ---------------------------------------------
+    def _local(self, base, model, system, history):
+        """Tools when the model can use them; the main figures up front when not.
+
+        Plenty of small local models were never trained to call tools, and
+        Ollama refuses the request outright for those. Rather than fail, look up
+        what most questions need — the headline numbers and the last two months
+        by category — and put it in front of the model with the question.
+        """
+        try:
+            return self._openai_compatible(model, "local", system, history, base,
+                                           LOCAL_TIMEOUT)
+        except ChatError as e:
+            if "tool" not in str(e).lower():
+                raise
+        steps, facts = [], {}
+        for name, args in self._briefing():
+            text, ok = self.run_tool(name, args)
+            steps.append({"tool": name, "input": args, "ok": ok})
+            if ok:
+                facts[name if not args else f"{name} {json.dumps(args)}"] = json.loads(text)
+        brief = (system + "\n\nThis model cannot call tools, so these figures were looked "
+                 "up for it. Answer only from them; if they do not cover the question, "
+                 "say what is missing.\n\n" + json.dumps(facts, default=str)[:MAX_TOOL_TEXT])
+        out = self.post(f"{base}/chat/completions",
+                        {"model": model, "stream": False,
+                         "messages": [{"role": "system", "content": brief}, *history]},
+                        {"Authorization": "Bearer local"}, LOCAL_TIMEOUT)
+        try:
+            text = out["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError, TypeError):
+            raise ChatError(f"unexpected reply from {base}: {str(out)[:200]}", 502)
+        u = out.get("usage") or {}
+        return text, steps, {"input": u.get("prompt_tokens", 0),
+                             "output": u.get("completion_tokens", 0)}
+
+    def _briefing(self) -> list[tuple[str, dict]]:
+        calls = [("summary", {}), ("monthly_totals", {})]
+        text, ok = self.run_tool("monthly_totals", {})
+        if ok:
+            months = [m["month"] for m in json.loads(text).get("months", []) if m.get("complete")]
+            calls += [("spending_by_category", {"month": m}) for m in months[-2:]]
+        return calls + [("subscriptions", {"include_bills": False})]
+
+
+_THINK = re.compile(r"<think>.*?</think>|<thinking>.*?</thinking>", re.S | re.I)

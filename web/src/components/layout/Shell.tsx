@@ -170,7 +170,7 @@ export function Shell({
 
           <footer className="px-5 pb-6 sm:px-8">
             <p className="text-xs text-[var(--color-ink-muted)]">
-              Read from your own statements. Nothing leaves this machine unless you use Ask.
+              Read from your own statements. Nothing leaves this machine unless you ask Claude or OpenAI.
             </p>
           </footer>
         </div>

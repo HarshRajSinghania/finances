@@ -329,7 +329,7 @@ export interface SubscriptionReview {
 
 /* ---------------------------------------------------------------- ask */
 
-export type Provider = "anthropic" | "openai"
+export type Provider = "anthropic" | "openai" | "local"
 
 export interface AskModel {
   id: string
@@ -359,4 +359,17 @@ export interface AskReply {
   provider: Provider
   model: string
   usage: { input: number; output: number }
+}
+
+/** Saved turns. Assistant turns carry the lookups behind them. */
+export interface AskHistory {
+  turns: (ChatMessage & { at?: string; steps?: AskStep[]; model?: string })[]
+}
+
+/** A model server on this machine or network, and the chat models it serves. */
+export interface AskLocal {
+  found: boolean
+  endpoint: string
+  server: string
+  models: AskModel[]
 }

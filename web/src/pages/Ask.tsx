@@ -5,12 +5,19 @@
  * server offers and calls the ones it needs, so every number in an answer was
  * looked up, and the chips under each answer say which lookups it made.
  *
+ * Answered questions are saved with the data (the store's settings table), so
+ * the conversation is still here after leaving the page or restarting; the
+ * trash button deletes it, after a confirmation.
+ *
+ * A local model (Ollama, LM Studio, llama.cpp, vLLM) needs no key, and the
+ * question never leaves the machine; the server is found automatically or named.
+ *
  * The key lives in this browser: in memory by default, in localStorage only if
  * "Remember on this device" is ticked. It goes to the local server with each
  * question, which passes it to the provider and keeps nothing.
  */
 
-import { ArrowUp, Check, ChevronDown, KeyRound, MessageSquareText, ShieldAlert, Trash2, Wrench, X } from "lucide-react"
+import { ArrowUp, Check, ChevronDown, Cpu, KeyRound, RefreshCw, MessageSquareText, ShieldAlert, Trash2, Wrench, X } from "lucide-react"
 import * as React from "react"
 
 import { AnimatedTabs } from "@/components/easyui/AnimatedTabs"
@@ -20,7 +27,7 @@ import { Input } from "@/components/ui/misc"
 import { Spinner } from "@/components/ui/state"
 import { useApi } from "@/hooks/useApi"
 import { api } from "@/lib/api"
-import type { AskModel, AskStep, AskStatus, ChatMessage, Provider } from "@/lib/types"
+import type { AskLocal, AskModel, AskStep, AskStatus, ChatMessage, Provider } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const SUGGESTIONS = [
@@ -64,16 +71,27 @@ interface Settings {
   model: Record<Provider, string>
   key: Record<Provider, string>
   remember: boolean
+  endpoint: string                 // a local server named by hand; "" = find one
 }
+
+const PROVIDERS: Provider[] = ["anthropic", "openai", "local"]
 
 function loadSettings(): Settings {
   const remembered = { anthropic: store.get("key.anthropic"), openai: store.get("key.openai") }
   const remember = Boolean(remembered.anthropic || remembered.openai)
   return {
     provider: (store.get("provider") as Provider) || "anthropic",
-    model: { anthropic: store.get("model.anthropic"), openai: store.get("model.openai") },
-    key: remember ? remembered : { anthropic: tab.get("key.anthropic"), openai: tab.get("key.openai") },
+    model: {
+      anthropic: store.get("model.anthropic"),
+      openai: store.get("model.openai"),
+      local: store.get("model.local"),
+    },
+    key: {
+      ...(remember ? remembered : { anthropic: tab.get("key.anthropic"), openai: tab.get("key.openai") }),
+      local: "",
+    },
     remember,
+    endpoint: store.get("endpoint.local"),
   }
 }
 
@@ -91,22 +109,74 @@ export function Ask() {
   const [turns, setTurns] = React.useState<Turn[]>([])
   const [draft, setDraft] = React.useState("")
   const [busy, setBusy] = React.useState(false)
+  const [confirming, setConfirming] = React.useState(false)
+  const [historyError, setHistoryError] = React.useState<string | null>(null)
   const endRef = React.useRef<HTMLDivElement>(null)
+  const follow = React.useRef(false)
+
+  // The saved conversation, once, when the page opens. Not scrolled to: coming
+  // back to the page should not jump it to the bottom.
+  React.useEffect(() => {
+    api
+      .askHistory()
+      .then((h) => setTurns((now) => (now.length ? now : h.turns)))
+      .catch(() => {
+        /* an older server keeps no history; the page still works */
+      })
+  }, [])
+
+  const [local, setLocal] = React.useState<AskLocal | null>(null)
+  const [finding, setFinding] = React.useState(false)
+  const [localError, setLocalError] = React.useState<string | null>(null)
 
   const { provider } = settings
   const info = status?.providers[provider]
-  const model = settings.model[provider] || info?.models[0]?.id || ""
-  const hasKey = Boolean(settings.key[provider] || info?.serverKey)
+  const models = provider === "local" ? (local?.models ?? []) : (info?.models ?? [])
+  const model = settings.model[provider] || models[0]?.id || ""
+  const hasKey =
+    provider === "local"
+      ? Boolean(local?.found && local.models.length)
+      : Boolean(settings.key[provider] || info?.serverKey)
+
+  const findLocal = React.useCallback(async (endpoint: string) => {
+    setFinding(true)
+    setLocalError(null)
+    try {
+      setLocal(await api.askLocal(endpoint || undefined))
+    } catch (e) {
+      setLocal(null)
+      setLocalError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setFinding(false)
+    }
+  }, [])
 
   React.useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
+    if (provider === "local" && !local && !finding && !localError) void findLocal(settings.endpoint)
+  }, [provider]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  React.useEffect(() => {
+    if (follow.current) endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
   }, [turns, busy])
+
+  const clear = async () => {
+    setHistoryError(null)
+    try {
+      await api.clearAskHistory()
+      setTurns([])
+      setConfirming(false)
+    } catch (e) {
+      setHistoryError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   const update = (next: Settings) => {
     setSettings(next)
     store.set("provider", next.provider)
-    for (const p of ["anthropic", "openai"] as Provider[]) {
+    store.set("endpoint.local", next.endpoint)
+    for (const p of PROVIDERS) {
       store.set(`model.${p}`, next.model[p])
+      if (p === "local") continue
       store.set(`key.${p}`, next.remember ? next.key[p] : "")
       tab.set(`key.${p}`, next.remember ? "" : next.key[p])
     }
@@ -119,11 +189,14 @@ export function Ask() {
       ...turns.filter((t) => !t.error).map(({ role, content }) => ({ role, content })),
       { role: "user", content: q },
     ]
+    follow.current = true
+    setConfirming(false)
     setTurns((t) => [...t, { role: "user", content: q }])
     setDraft("")
     setBusy(true)
     try {
-      const r = await api.ask(provider, model, settings.key[provider], history)
+      const r = await api.ask(provider, model, settings.key[provider], history,
+                              provider === "local" ? local?.endpoint || settings.endpoint : undefined)
       setTurns((t) => [...t, { role: "assistant", content: r.answer, steps: r.steps, model: r.model }])
     } catch (e) {
       setTurns((t) => [
@@ -158,7 +231,14 @@ export function Ask() {
           </span>
         </p>
       )}
-      <KeySettings status={status} settings={settings} onChange={update} model={model} />
+      <KeySettings
+        status={status}
+        settings={settings}
+        onChange={update}
+        model={model}
+        models={models}
+        local={{ found: local, finding, error: localError, find: findLocal }}
+      />
 
       <Card className="flex min-h-[28rem] flex-col">
         <div className="flex-1 space-y-5 p-5" aria-live="polite">
@@ -169,11 +249,41 @@ export function Ask() {
           )}
           {busy && (
             <div className="flex items-center gap-2 text-xs text-[var(--color-ink-muted)]">
-              <Spinner className="size-3.5" /> Looking it up…
+              <Spinner className="size-3.5" />
+              {provider === "local"
+                ? "Looking it up… a local model can take a minute"
+                : "Looking it up…"}
             </div>
           )}
           <div ref={endRef} />
         </div>
+
+        {(confirming || historyError) && (
+          <div
+            role="alertdialog"
+            aria-label="Delete the conversation"
+            className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-[var(--color-hairline)] bg-[var(--color-critical)]/5 px-4 py-2.5 text-sm"
+          >
+            <span className="flex-1 text-[var(--color-ink-secondary)]">
+              {historyError
+                ? `Could not delete it: ${historyError}`
+                : `Delete all ${turns.length} messages? They are removed from this computer and cannot be brought back.`}
+            </span>
+            <Button size="sm" variant="danger" onClick={() => void clear()}>
+              <Trash2 /> Delete
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setConfirming(false)
+                setHistoryError(null)
+              }}
+            >
+              Keep it
+            </Button>
+          </div>
+        )}
 
         <form
           className="flex items-end gap-2 border-t border-[var(--color-hairline)] p-3"
@@ -202,10 +312,10 @@ export function Ask() {
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => setTurns([])}
-              disabled={busy}
-              aria-label="Clear the conversation"
-              title="Clear the conversation"
+              onClick={() => setConfirming(true)}
+              disabled={busy || confirming}
+              aria-label="Delete the conversation"
+              title="Delete the conversation"
             >
               <Trash2 />
             </Button>
@@ -226,23 +336,35 @@ export function Ask() {
 
 /* --------------------------------------------------------- key card */
 
+interface LocalState {
+  found: AskLocal | null
+  finding: boolean
+  error: string | null
+  find: (endpoint: string) => Promise<void>
+}
+
 function KeySettings({
   status,
   settings,
   onChange,
   model,
+  models,
+  local,
 }: {
   status: AskStatus | null
   settings: Settings
   onChange: (s: Settings) => void
   model: string
+  models: AskModel[]
+  local: LocalState
 }) {
   const { provider } = settings
   const info = status?.providers[provider]
   const saved = settings.key[provider]
   const [editing, setEditing] = React.useState(!saved && !info?.serverKey)
   const [draft, setDraft] = React.useState("")
-  const label = info?.label ?? (provider === "anthropic" ? "Claude" : "OpenAI")
+  const label = info?.label ?? { anthropic: "Claude", openai: "OpenAI", local: "Local model" }[provider]
+  const isLocal = provider === "local"
 
   React.useEffect(() => {
     setEditing(!settings.key[provider] && !info?.serverKey)
@@ -264,8 +386,8 @@ function KeySettings({
           Your AI provider
         </CardTitle>
         <CardDescription>
-          Bring your own key. You pay the provider for what you use; nothing goes
-          through anyone else.
+          Bring your own key, or run a model on this computer. Nothing goes through
+          anyone else.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -277,17 +399,27 @@ function KeySettings({
           tabs={[
             { id: "anthropic", label: "Claude" },
             { id: "openai", label: "OpenAI" },
+            { id: "local", label: "Local model" },
           ]}
         />
 
         <div className="grid gap-4 sm:grid-cols-[minmax(0,16rem)_1fr]">
           <ModelPicker
-            models={info?.models ?? []}
-            checked={status?.checked}
+            models={models}
+            source={
+              isLocal
+                ? local.found?.found
+                  ? `served by ${local.found.server}`
+                  : undefined
+                : status?.checked && `from the docs, ${status.checked}`
+            }
             value={model}
             onChange={(id) => onChange({ ...settings, model: { ...settings.model, [provider]: id } })}
           />
 
+          {isLocal ? (
+            <LocalServer settings={settings} onChange={onChange} local={local} />
+          ) : (
           <div className="space-y-1.5">
             <span className="text-xs font-medium text-[var(--color-ink-secondary)]">
               {label} API key
@@ -348,8 +480,10 @@ function KeySettings({
               </div>
             )}
           </div>
+          )}
         </div>
 
+        {!isLocal && (
         <label className="flex items-center gap-2 text-xs text-[var(--color-ink-secondary)]">
           <input
             type="checkbox"
@@ -360,18 +494,105 @@ function KeySettings({
           Remember keys on this device (kept in this browser only; otherwise
           they are forgotten when you close the tab)
         </label>
+        )}
 
         <p className="flex gap-2 rounded-md bg-[var(--color-plane)] px-3 py-2.5 text-xs leading-relaxed text-[var(--color-ink-secondary)]">
-          <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-[var(--color-warning)]" aria-hidden />
-          <span>
-            Your question and the numbers the assistant looks up (totals, merchant
-            names, amounts) are sent to {provider === "anthropic" ? "Anthropic" : "OpenAI"}{" "}
-            to write the answer. Your statement files and database stay here.
-            {model && <> Model: <span className="font-mono">{model}</span>.</>}
-          </span>
+          {isLocal ? (
+            <>
+              <Cpu className="mt-0.5 size-3.5 shrink-0 text-[var(--color-good)]" aria-hidden />
+              <span>
+                Everything stays on your machine: the question and the numbers the
+                model looks up go only to{" "}
+                {local.found?.found ? (
+                  <>
+                    {local.found.server} at{" "}
+                    <span className="font-mono">{local.found.endpoint}</span>
+                  </>
+                ) : (
+                  "the local server"
+                )}
+                . A model that cannot use tools is handed the main figures instead.
+              </span>
+            </>
+          ) : (
+            <>
+              <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-[var(--color-warning)]" aria-hidden />
+              <span>
+                Your question and the numbers the assistant looks up (totals, merchant
+                names, amounts) are sent to {provider === "anthropic" ? "Anthropic" : "OpenAI"}{" "}
+                to write the answer. Your statement files and database stay here.
+                {model && <> Model: <span className="font-mono">{model}</span>.</>}
+              </span>
+            </>
+          )}
         </p>
       </CardContent>
     </Card>
+  )
+}
+
+/* ------------------------------------------------------------ local */
+
+/** Which local server: found automatically, or an address typed in. */
+function LocalServer({
+  settings,
+  onChange,
+  local,
+}: {
+  settings: Settings
+  onChange: (s: Settings) => void
+  local: LocalState
+}) {
+  const [draft, setDraft] = React.useState(settings.endpoint)
+  const f = local.found
+  const look = (endpoint: string) => {
+    onChange({ ...settings, endpoint })
+    void local.find(endpoint)
+  }
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor="ask-endpoint" className="text-xs font-medium text-[var(--color-ink-secondary)]">
+        Server
+      </label>
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          look(draft.trim())
+        }}
+      >
+        <Input
+          id="ask-endpoint"
+          spellCheck={false}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={f?.found ? f.endpoint : "found automatically, or http://localhost:11434/v1"}
+          className="font-mono"
+        />
+        <Button type="submit" variant="outline" disabled={local.finding}>
+          <RefreshCw className={cn(local.finding && "animate-spin")} />
+          {draft.trim() ? "Connect" : "Find"}
+        </Button>
+      </form>
+      <p className="text-xs" role="status">
+        {local.finding ? (
+          <span className="text-[var(--color-ink-muted)]">Looking for a model server…</span>
+        ) : local.error ? (
+          <span className="text-[var(--color-critical)]">{local.error}</span>
+        ) : f?.found ? (
+          <span className="inline-flex items-center gap-1.5 text-[var(--color-good)]">
+            <Check className="size-3.5" />
+            {f.server} · {f.models.length} chat model{f.models.length === 1 ? "" : "s"}
+            {!f.models.length && " (pull one first, e.g. ollama pull qwen3.5)"}
+          </span>
+        ) : f ? (
+          <span className="text-[var(--color-ink-secondary)]">
+            No model server found. Start Ollama (<code className="font-mono">ollama serve</code>)
+            or LM Studio&apos;s local server, then press Find.
+          </span>
+        ) : null}
+      </p>
+    </div>
   )
 }
 
@@ -386,12 +607,12 @@ const OTHER = "__other__"
  */
 function ModelPicker({
   models,
-  checked,
+  source,
   value,
   onChange,
 }: {
   models: AskModel[]
-  checked?: string
+  source?: string | false
   value: string
   onChange: (id: string) => void
 }) {
@@ -444,7 +665,7 @@ function ModelPicker({
       ) : (
         <p className="font-mono text-[11px] text-[var(--color-ink-muted)]">
           {value}
-          {checked && <span className="font-sans"> · from the docs, {checked}</span>}
+          {source && <span className="font-sans"> · {source}</span>}
         </p>
       )}
     </div>

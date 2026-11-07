@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Ask works with a local model: Ollama, LM Studio, llama.cpp or vLLM, found
+  automatically or named by address (only on this machine or network). No key,
+  nothing leaves the network, and models without tool support are given the
+  main figures up front.
+
+### Changed
+- Ask keeps the conversation: answered questions are saved with the data and
+  are there after leaving the page or restarting. A delete button (with a
+  confirmation) removes them. Only the last 20 messages go to the provider with
+  each question.
+
 ## [0.4.0] - 2026-11-07
 
 ### Added
