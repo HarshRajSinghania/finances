@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.1] - 2026-11-07
 
 ### Added
 - Ask works with a local model: Ollama, LM Studio, llama.cpp or vLLM, found
