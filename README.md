@@ -1,8 +1,17 @@
 # finances
 
-Personal finance analysis that reads your statement PDFs directly. No bank
+[![ci](https://github.com/roshanlam/finances/actions/workflows/ci.yml/badge.svg)](https://github.com/roshanlam/finances/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/finances)](https://pypi.org/project/finances/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+See where your money goes from your own bank statements and exports. No bank
 login, no Plaid, no account linking, no cloud. Everything runs on your machine
 and nothing is uploaded anywhere.
+
+```bash
+uvx finances demo && uvx finances web --db demo.db --open    # try it on made-up data
+```
 
 [![A 20-second tour of finances, on made-up demo data](docs/demo.gif)](docs/demo.mp4)
 
@@ -46,7 +55,11 @@ holiday spike — into a separate `demo.db`. It goes through the same
 reconciliation and categorizer as a real statement.
 
 ```bash
-# with uv
+# with uv, nothing to clone
+uvx finances demo
+uvx finances web --db demo.db --open
+
+# or from a checkout
 git clone https://github.com/roshanlam/finances && cd finances
 uv run finances demo
 uv run finances web --db demo.db --open
@@ -69,7 +82,50 @@ uv run finances web --open               # builds the dashboard on first run
 ```
 
 Any folder layout works — subfolders are searched too. Tested against Amex,
-Chase (card and checking), Capital One and Discover.
+Chase (card and checking), Capital One and Discover. For any other bank, use
+its export (next section), or let a local model read the PDF.
+
+## Any bank: CSV, OFX/QFX, CAMT.053, MT940
+
+Nearly every bank lets you download your transactions. `import` reads those
+files, works out the columns, the date format, the decimal separator and which
+way the amounts are signed, and checks them against whatever balances the file
+carries:
+
+```bash
+uv run finances import ~/Downloads/activity.csv
+uv run finances import exports/                 # a whole folder, any mix of formats
+```
+
+| Format | Who exports it | How it is checked |
+|---|---|---|
+| CSV with a running balance | most bank accounts | every row has to move the balance by exactly its amount |
+| CSV without one | most card sites | imported, and marked unverified — honestly |
+| OFX / QFX / QBO | US banks ("Quicken" / "Money" download) | each export's opening balance must equal the previous export's closing balance |
+| CAMT.053 | European banks (ISO 20022 XML) | opening balance + every booked entry = closing balance |
+| MT940 | European banks (SWIFT) | opening balance + every entry = closing balance |
+
+Headers are recognised in English, German, French, Spanish, Italian, Dutch and
+the Nordic languages, `1.234,56` and `05.01.2026` are read the European way, and
+a summary block above the header (Bank of America does this) is skipped. When
+downloads overlap, rows already in the store for that account are skipped, not
+counted twice. If a CSV is ambiguous, say so: `--sign out-negative`,
+`--date-format %d.%m.%Y`, `--account 1234 --issuer "My Bank" --kind card`.
+
+## A bank the parser does not know: a local model, checked
+
+```bash
+uv run finances parse PDFs/ --llm
+```
+
+When a statement's layout is not understood (nothing extracted, or the
+extraction does not reconcile), its text goes to a model running **on your
+machine** — Ollama, LM Studio or llama.cpp — which lists the transaction rows.
+The statement's printed totals are still read by the deterministic parser, so
+the model never supplies both the answer and the check: its rows are kept only
+if they add up to those totals. Otherwise they are discarded and the statement
+stays marked as a mismatch. `FINANCES_LLM_FALLBACK=1` turns this on for the
+dashboard's uploads too.
 
 **Always look at the `check` verdict at the end before trusting anything
 else.** If it does not say 100%, the numbers downstream are built on a bad
@@ -101,9 +157,19 @@ image.
 
 Your statements, the reconciliation verdict for each one, spending by month and
 category, detected subscriptions, and a searchable transaction table. **You
-can drag new statement PDFs straight onto it**: they are parsed on drop, and
-the reply tells you how many transactions came out and whether the file
-reconciles against its own printed totals.
+can drag new statement PDFs or bank exports straight onto it**: they are read
+on drop, and the reply tells you how many transactions came out and whether the
+file checks out.
+
+- **Wrapped** — your year in money: where it went, your regular, the month that
+  got away from you, what subscriptions cost you all year, and how much of it
+  traces back to a statement that reconciles.
+- **Budgets & goals** — a monthly limit per category, projected to the end of
+  the month so you hear about it before it is broken; savings goals against the
+  surplus your statements actually show.
+- **Cancel these** — recurring charges ranked by what dropping them saves, with
+  the reason each one is there (a price that went up, three services doing one
+  job). Mark one cancelled and any charge after that date is flagged.
 
 The server makes no outbound requests, binds to localhost, and refuses any
 request that does not come from a page on localhost — so another website open
@@ -117,6 +183,9 @@ use `http://localhost:5173` (it proxies `/api` through).
 
 ```bash
 uv run finances analyze            # where the money went
+uv run finances wrapped            # your year in money
+uv run finances budget             # this month against your limits
+uv run finances budget cancel      # the subscriptions worth cancelling
 uv run finances cashflow           # the next 60 days
 uv run finances audit              # the reckoning
 uv run finances cpi                # your own inflation rate
@@ -138,10 +207,13 @@ command are also environment variables:
 | Variable | Default | What it sets |
 |---|---|---|
 | `FINANCES_DB` | `finances.db` | the store every command reads and writes |
-| `FINANCES_PDF_DIR` | `PDFs/` next to the code | where dashboard uploads are saved |
+| `FINANCES_PDF_DIR` | `./PDFs` | where dashboard uploads are saved |
 | `FINANCES_HOST` / `FINANCES_PORT` | `127.0.0.1` / `8787` | where `finances web` listens |
-| `FINANCES_LLM_ENDPOINT` | Ollama, LM Studio, llama.cpp on localhost | the model server for `ask` and `enrich` |
-| `FINANCES_WEB_DIST` | `web/dist` | a prebuilt dashboard to serve |
+| `FINANCES_CURRENCY` | `USD` (or `finances fx --base`) | the currency every total is reported in |
+| `FINANCES_LLM_ENDPOINT` | Ollama, LM Studio, llama.cpp on localhost | the model server for `ask`, `enrich` and `parse --llm` |
+| `FINANCES_LLM_FALLBACK` | off | `1` lets a local model read unknown PDF layouts, uploads included |
+| `FINANCES_PLAN` | `plan.json` | where savings goals are kept |
+| `FINANCES_WEB_DIST` | `web/dist`, or the copy inside the package | a prebuilt dashboard to serve |
 
 ---
 
@@ -149,12 +221,17 @@ command are also environment variables:
 
 | Command | What it does | Writes |
 |---|---|---|
-| `parse PDFs/` | extract transactions from statement PDFs | `finances.db` |
+| `parse PDFs/` | extract transactions from statement PDFs (`--llm` for unknown layouts) | `finances.db` |
+| `import exports/` | bank CSV, OFX/QFX, CAMT.053 and MT940 files | `finances.db` |
 | `check` | reconciliation and coverage report | — |
 | `categorize apply` | label transactions, write back to the store | `finances.db` |
 | `analyze` | spending dashboard | `finance_dashboard.html`, `insights.md` |
 | `cashflow` | daily balance projection with a low-point warning | `cashflow.html` |
 | `plan status` | savings goals against your real surplus | `plan.json` |
+| `budget` | monthly limits per category; `budget cancel` for the cancel list | `finances.db` |
+| `wrapped` | your year in money | — |
+| `export beancount` | beancount, hledger/ledger, YNAB or Actual files | the file you name |
+| `fx` | base currency and exchange rates | `finances.db` |
 | `audit` | a strict grandfather goes through your statements | `auditor_ledger.json` |
 | `cpi` | personal inflation, per merchant and per category | `cpi.html` |
 | `backtest` | grades the forecasts against what actually happened | `backtest.html` |
@@ -194,6 +271,38 @@ uv run finances analyze --income 6200
 uv run finances categorize review
 ```
 
+## Hand it to the tool you already use
+
+This gets complete, checked transactions out of statements. Budgeting apps and
+plain-text ledgers are better at other things, so it hands the rows over:
+
+```bash
+uv run finances export beancount -o money.beancount --balances
+uv run finances export hledger   -o money.journal   --balances   # ledger-cli reads it too
+uv run finances export ynab      -o exports/        # one CSV per account
+uv run finances export actual    -o exports/
+```
+
+With `--balances`, every reconciled statement's closing balance becomes a
+balance assertion, so `bean-check` or `hledger check` re-verifies the whole
+history independently of this tool. Card payments from checking go through an
+`Assets:Transfers` account, so they net to zero instead of counting twice.
+
+## More than one currency
+
+Each transaction keeps the currency its file was in. Totals are reported in one
+base currency, at rates you set — there is no rate feed, because nothing here
+goes online:
+
+```bash
+uv run finances fx --base EUR            # report in euros
+uv run finances fx USD=0.92 GBP=1.17     # 1 USD is 0.92 of the base currency
+uv run finances fx                       # what is set, and what is still missing
+```
+
+Rows in a currency with no rate are left out of the totals and counted, and the
+dashboard says so, rather than quietly adding euros to dollars.
+
 ## Asking questions offline
 
 `ask` needs a local model server. Without one, `--sql` and `--examples` still
@@ -220,7 +329,8 @@ minutes per question for no benefit on this task. Pick explicitly with
 | Symptom | Cause and fix |
 |---|---|
 | `finances.db does not exist` | Run `parse` first. |
-| `check` reports mismatches | The extraction is wrong for those files. Run `finances parse <file> --dump-columns` to see the columns it found. |
+| `check` reports mismatches | The extraction is wrong for those files. Run `finances parse <file> --dump-columns` to see the columns it found, or `--llm` to let a local model try. |
+| A bank is not supported | Download its CSV/OFX export and `finances import` it, or [ask for the bank](https://github.com/roshanlam/finances/issues/new?template=new-bank.yml). |
 | `check` reports gaps | A statement month is missing from your folder. Totals are being computed on incomplete data. |
 | Lots of `Uncategorized` | `categorize review` to teach it, or `enrich` to use a local LLM. |
 | `cashflow` will not project | It could not find a checking-account balance. Pass `--balance 2400`. |
@@ -231,18 +341,23 @@ minutes per question for no benefit on this task. Pick explicitly with
 # How it fits together
 
 ```
-PDFs ──▶ parse.py ──▶ finances.db ──▶ engine.py ──▶ every other tool
-              │                          │
-       reconciles each              the read model: what counts as
-       statement against            spending, which months are complete,
-       its printed totals           what repeats, what is verified
+PDFs ─────▶ parse.py ───┐
+   (llm_parse.py, checked)  ├──▶ finances.db ──▶ engine.py ──▶ every other tool
+exports ─▶ importer.py ─┘          │                 │
+                                   │          the read model: what counts as
+       each file checked against   │          spending, which months are complete,
+       its own totals or balances  │          what repeats, what is verified
+                                   └──▶ export.py ──▶ beancount, hledger, YNAB, Actual
 ```
 
 ```
 finances/          the package — one module per tool, plus the shared core below
   cli.py           `finances <command>`: the front door, dispatches to each tool
   parse.py         PDFs -> the store, reconciling each statement as it goes
+  importer.py      bank exports (CSV, OFX, CAMT.053, MT940) -> the store, balance-checked
+  llm_parse.py     a local model for unknown PDF layouts, kept only if it reconciles
   engine.py        the read model every tool shares
+  export.py        the store -> beancount, hledger, YNAB, Actual
   api.py           the dashboard's JSON API and static server
   demo.py          the made-up store
   ...              analyze, cashflow, cpi, backtest, ask, planner, anonymize, ...
@@ -323,7 +438,7 @@ $ uv run finances categorize eval
 uv run python -m unittest discover tests
 ```
 
-250 tests, no test dependencies. The parser's golden-file tests skip when
+289 tests, no test dependencies. The parser's golden-file tests skip when
 `PDFs/` is empty, so a fresh clone runs the rest. The golden-file harness
 records per-statement extraction totals so a parser change that moves a number
 is visible:
@@ -339,8 +454,10 @@ Your statements and the store never leave the machine. `PDFs/`, `*.db`, the
 generated dashboards and `anonymize_map.json` are all gitignored. The map file
 is what turns `MERCHANT_007` back into a real name — keep it, do not share it.
 
-`ask` and `enrich` talk only to a model server on localhost. Nothing else in
-the project makes a network request at all.
+`ask`, `enrich` and `parse --llm` talk only to a model server on localhost.
+Nothing else in the project makes a network request at all. See
+[SECURITY.md](SECURITY.md) for how the dashboard is locked to your own machine
+and how to report a problem.
 
 # Not financial advice
 

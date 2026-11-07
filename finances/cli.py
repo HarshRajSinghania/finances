@@ -9,18 +9,22 @@ run things in. This is the front door.
 
     finances demo                made-up data to try everything on  -> demo.db
     finances parse PDFs          statements  -> finances.db
+    finances import exports/     bank CSV, OFX/QFX, CAMT.053, MT940 -> finances.db
     finances web                 the dashboard, in a browser
     finances check               does the data agree with the statements?
     finances categorize stats    how much is actually labelled
     finances analyze             the dashboard
     finances cashflow            the next 60 days
     finances plan status         goals against your real surplus
+    finances budget              monthly limits, and the subscriptions to cancel
+    finances wrapped             your year in money
     finances audit               the reckoning
     finances cpi                 your own inflation rate
     finances backtest            how accurate are the forecasts
     finances ask "..."           natural language, offline
     finances anonymize           make it safe to share
     finances enrich              local LLM merchant cleanup
+    finances export beancount    hand the data to beancount, hledger, YNAB, Actual
 
     finances pipeline PDFs       parse, categorize and analyze in one go
 
@@ -41,16 +45,21 @@ from finances.database import DEFAULT_DB
 # subcommand -> (module, one-line help)
 COMMANDS: dict[str, tuple[str, str]] = {
     "parse":      ("parse", "extract transactions from statement PDFs into the store"),
+    "import":     ("importer", "bank exports (CSV, OFX/QFX, CAMT.053, MT940) into the store"),
     "check":      ("",      "reconciliation and coverage: can these numbers be trusted"),
     "analyze":    ("analyze", "build the spending dashboard"),
     "cashflow":   ("cashflow", "project the daily balance forward and find the low point"),
     "plan":       ("planner", "goals, surplus and when each one lands"),
+    "budget":     ("budgets", "monthly limits per category, and the cancel list"),
+    "wrapped":    ("wrapped", "your year in money, in one screen"),
     "audit":      ("financial_auditor", "the strict grandfather goes through your statements"),
     "cpi":        ("cpi", "your personal inflation rate, per merchant and per category"),
     "backtest":   ("backtest", "grade the forecasts against what actually happened"),
     "ask":        ("ask", "ask the store a question in plain English, offline"),
     "categorize": ("categorizer", "apply, review and score the category rules"),
     "anonymize":  ("anonymize", "produce a shareable copy of your data"),
+    "export":     ("export", "write beancount, hledger/ledger, YNAB or Actual files"),
+    "fx":         ("fx", "base currency and exchange rates for multi-currency stores"),
     "enrich":     ("llm_enrich", "clean up merchant names with a local LLM"),
     "engine":     ("engine", "the raw unified view over the store"),
     "web":        ("api", "serve the web dashboard on localhost"),
@@ -62,7 +71,8 @@ ALIASES = {
     "planner": "plan", "auditor": "audit", "dashboard": "analyze",
     "categorizer": "categorize", "flow": "cashflow", "inflation": "cpi",
     "query": "ask", "trust": "check", "serve": "web", "ui": "web",
-    "dashboard-web": "web", "api": "web",
+    "dashboard-web": "web", "api": "web", "budgets": "budget",
+    "subscriptions": "budget", "year": "wrapped",
 }
 
 # Tools with their own subcommands, where the name here is not the name there.

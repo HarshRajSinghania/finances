@@ -7,15 +7,21 @@
 
 import type {
   Anomalies,
+  BudgetStatus,
   CategoryRow,
+  GoalInput,
+  Goals,
   Merchant,
   MonthRow,
   Recurring,
   Statement,
+  SubscriptionMark,
+  SubscriptionReview,
   Summary,
   TransactionPage,
   TransactionQuery,
   UploadResponse,
+  Wrapped,
 } from "./types"
 
 /** Vite proxies /api to the Python server in dev; in production it serves this app. */
@@ -45,20 +51,42 @@ async function get<T>(path: string, params?: Record<string, unknown>): Promise<T
     // A dead socket is the common case in dev: the API is simply not running.
     // Say that, rather than surfacing "Failed to fetch".
     throw new ApiError(
-      "Cannot reach the finances API. Start it with:  python api.py",
+      "Cannot reach the finances API. Start it with:  finances web",
       0,
     )
   }
 
-  if (!res.ok) {
-    let detail = res.statusText
-    try {
-      detail = ((await res.json()) as { error?: string }).error ?? detail
-    } catch {
-      /* body was not JSON; the status text will do */
-    }
-    throw new ApiError(detail, res.status)
+  if (!res.ok) throw await failure(res)
+  return (await res.json()) as T
+}
+
+/** Read the error a non-2xx response carries, falling back to the status text. */
+async function failure(res: Response): Promise<ApiError> {
+  let detail = res.statusText
+  try {
+    detail = ((await res.json()) as { error?: string }).error ?? detail
+  } catch {
+    /* body was not JSON; the status text will do */
   }
+  return new ApiError(detail, res.status)
+}
+
+/**
+ * A JSON write. The API only accepts application/json for these, which a page
+ * on another origin cannot send without a preflight the server never answers.
+ */
+async function send<T>(method: "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  } catch {
+    throw new ApiError("Cannot reach the finances API. Start it with:  finances web", 0)
+  }
+  if (!res.ok) throw await failure(res)
   return (await res.json()) as T
 }
 
@@ -83,6 +111,27 @@ export const api = {
   merchants: (limit = 50) => get<{ merchants: Merchant[] }>("/merchants", { limit }),
 
   anomalies: () => get<Anomalies>("/anomalies"),
+
+  wrapped: (year?: number) => get<Wrapped>("/wrapped", { year }),
+
+  budgets: () => get<BudgetStatus>("/budgets"),
+
+  /** Set a category's monthly limit; `null` removes it. */
+  setBudget: (category: string, limit: number | null) =>
+    send<BudgetStatus>("POST", "/budgets", { category, limit }),
+
+  goals: () => get<Goals>("/goals"),
+
+  saveGoal: (goal: GoalInput) => send<Goals>("POST", "/goals", goal),
+
+  deleteGoal: (name: string) =>
+    send<Goals>("DELETE", `/goals/${encodeURIComponent(name)}`),
+
+  subscriptionReview: () => get<SubscriptionReview>("/subscriptions/review"),
+
+  /** Keep, cancelled, or `null` to undo either. */
+  markSubscription: (key: string, status: SubscriptionMark) =>
+    send<SubscriptionReview>("POST", "/subscriptions/mark", { key, status }),
 
   /**
    * Upload statement PDFs. They are parsed into the store immediately, so the
@@ -119,7 +168,7 @@ export const api = {
         }
       }
       xhr.onerror = () =>
-        reject(new ApiError("Cannot reach the finances API. Start it with:  python api.py", 0))
+        reject(new ApiError("Cannot reach the finances API. Start it with:  finances web", 0))
       xhr.send(body)
     })
   },

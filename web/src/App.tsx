@@ -4,11 +4,14 @@ import { Shell } from "@/components/layout/Shell"
 import { ErrorState } from "@/components/ui/state"
 import { useApi } from "@/hooks/useApi"
 import { api } from "@/lib/api"
+import { setCurrency } from "@/lib/format"
 import { Insights } from "@/pages/Insights"
 import { Overview } from "@/pages/Overview"
+import { Plan } from "@/pages/Plan"
 import { Statements } from "@/pages/Statements"
 import { Subscriptions } from "@/pages/Subscriptions"
 import { Transactions } from "@/pages/Transactions"
+import { Wrapped } from "@/pages/Wrapped"
 
 export default function App() {
   // The summary carries the reconciliation verdict shown in the header on every
@@ -16,6 +19,10 @@ export default function App() {
   // per page. `reload` is passed to pages that mutate the store (uploads,
   // deletes) so the header cannot drift out of date after a change.
   const { data: summary, error, loading, refetch } = useApi(() => api.summary(), [])
+
+  // Set during render, not in an effect, so the first paint of every page
+  // already formats money in the store's own currency.
+  if (summary) setCurrency(summary.currency)
 
   if (error && !summary) {
     return (
@@ -27,7 +34,7 @@ export default function App() {
               This dashboard reads a local API. Start it from the project root:
             </p>
             <pre className="mt-2 overflow-x-auto rounded-md bg-[var(--color-plane)] px-3 py-2 font-mono text-xs">
-              python api.py
+              finances web
             </pre>
           </div>
         </div>
@@ -46,6 +53,8 @@ export default function App() {
         <Route path="transactions" element={<Transactions />} />
         <Route path="subscriptions" element={<Subscriptions />} />
         <Route path="insights" element={<Insights />} />
+        <Route path="plan" element={<Plan />} />
+        <Route path="wrapped" element={<Wrapped />} />
         <Route
           path="*"
           element={

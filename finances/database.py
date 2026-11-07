@@ -16,6 +16,7 @@ there is the only edit needed — the table columns follow automatically.
 from __future__ import annotations
 
 import csv
+import json
 import os
 import sqlite3
 from collections import defaultdict
@@ -64,6 +65,10 @@ class FinanceDB:
                 mtime      REAL,
                 parsed_at  TEXT DEFAULT CURRENT_TIMESTAMP,
                 txn_count  INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
             );
         """)
         # Migrate before indexing. An index names a column, so creating one over
@@ -141,6 +146,29 @@ class FinanceDB:
             "parsed_at=CURRENT_TIMESTAMP, txn_count=excluded.txn_count",
             (path, sha, mtime, txn_count),
         )
+        self.conn.commit()
+
+    # -- settings --------------------------------------------------------
+    # Budgets, exchange rates and subscription decisions are about the data, so
+    # they live next to it: copy the .db and they come along.
+    def get_setting(self, key: str, default=None):
+        row = self.conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if row is None or row["value"] is None:
+            return default
+        try:
+            return json.loads(row["value"])
+        except json.JSONDecodeError:
+            return default
+
+    def set_setting(self, key: str, value):
+        if value is None:
+            self.conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+        else:
+            self.conn.execute(
+                "INSERT INTO settings(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, json.dumps(value)))
         self.conn.commit()
 
     # -- writes ----------------------------------------------------------

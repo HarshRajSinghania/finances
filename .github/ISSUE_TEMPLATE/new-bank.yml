@@ -1,0 +1,34 @@
+name: Support a bank
+description: A bank's statement PDF or export does not import correctly
+labels: ["bank support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never attach a real statement or export.** Redact names, account numbers and amounts, or describe the layout.
+  - type: input
+    id: bank
+    attributes:
+      label: Bank and account type
+      placeholder: "e.g. Citi Double Cash card, ING current account (NL)"
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: File type
+      options: [Statement PDF, CSV, OFX / QFX, CAMT.053, MT940, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: What the file looks like
+      description: For a CSV, the header row and one made-up row. For a PDF, the column headings of the transaction table.
+      render: text
+  - type: textarea
+    id: output
+    attributes:
+      label: What finances printed
+      description: Output of `finances import <file>` or `finances parse <file> --dump-columns`, with personal details removed.
+      render: text

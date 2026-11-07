@@ -13,11 +13,16 @@
 
 import {
   AlertTriangle,
+  Ban,
+  Check,
+  ChevronDown,
   CircleHelp,
+  Scissors,
   Percent,
   Repeat,
   TrendingDown,
   TrendingUp,
+  Undo2,
 } from "lucide-react"
 import * as React from "react"
 
@@ -54,7 +59,13 @@ import {
   signedMoney,
   signedPercent,
 } from "@/lib/format"
-import type { Cadence, Recurring } from "@/lib/types"
+import type {
+  Cadence,
+  Recurring,
+  ReviewItem,
+  SubscriptionMark,
+  SubscriptionReview,
+} from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /** How many charges a year each cadence produces. Matches the API's perYear. */
@@ -116,6 +127,8 @@ export function Subscriptions() {
         subscriptions — it is a pattern in the transactions, so every row carries how
         steady that pattern actually is.
       </p>
+
+      <CancelList />
 
       <InterestToggle
         on={includeInterest}
@@ -573,5 +586,207 @@ function LoadingView() {
         <LoadingRows rows={8} />
       </div>
     </>
+  )
+}
+
+/* ------------------------------------------------------------- cancel list */
+
+/**
+ * The findings turned into decisions. Each candidate says why it is here, and
+ * the two buttons record what you did about it: kept stops it being suggested,
+ * cancelled arms a check that flags any charge after that day — a cancellation
+ * that did not take is the most expensive kind.
+ */
+function CancelList() {
+  const { data: fetched, error, refetch } = useApi(() => api.subscriptionReview(), [])
+  const [data, setData] = React.useState<SubscriptionReview | null>(null)
+  const [busy, setBusy] = React.useState<string | null>(null)
+  const [writeError, setWriteError] = React.useState<string | null>(null)
+  const [showDecided, setShowDecided] = React.useState(false)
+  React.useEffect(() => setData(fetched), [fetched])
+
+  const mark = async (key: string, status: SubscriptionMark) => {
+    setBusy(key)
+    setWriteError(null)
+    try {
+      setData(await api.markSubscription(key, status))
+    } catch (e) {
+      setWriteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (error && !data) {
+    return (
+      <div className="card">
+        <ErrorState error={error} onRetry={refetch} />
+      </div>
+    )
+  }
+  if (!data) return null
+
+  const decided = [...data.kept, ...data.cancelled]
+  if (data.candidates.length === 0 && data.stillCharging.length === 0 && decided.length === 0) {
+    return null
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Scissors className="size-4" strokeWidth={1.75} aria-hidden />
+          Cancel these?
+        </CardTitle>
+        <CardDescription>
+          {data.candidates.length > 0 ? (
+            <>
+              <span className="tnum font-medium text-[var(--color-ink)]">
+                {money(data.savingsPerYear)} a year
+              </span>{" "}
+              if every one of these went. Rent, insurance and utilities are left off —
+              nobody cancels those to save money.
+            </>
+          ) : (
+            "Nothing left to decide on."
+          )}
+          {data.savedPerYear > 0 &&
+            ` Already cancelled: ${money(data.savedPerYear)} a year saved.`}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {data.stillCharging.map((r) => (
+          <CancelRow
+            key={r.key}
+            r={r}
+            alert
+            busy={busy === r.key}
+            actions={
+              <Button size="sm" variant="outline" onClick={() => mark(r.key, null)}>
+                <Undo2 /> Clear
+              </Button>
+            }
+          />
+        ))}
+
+        {data.candidates.map((r) => (
+          <CancelRow
+            key={r.key}
+            r={r}
+            busy={busy === r.key}
+            actions={
+              <>
+                <Button size="sm" variant="outline" onClick={() => mark(r.key, "keep")}>
+                  <Check /> Keep
+                </Button>
+                <Button size="sm" variant="danger" onClick={() => mark(r.key, "cancelled")}>
+                  <Ban /> Cancelled
+                </Button>
+              </>
+            }
+          />
+        ))}
+
+        {writeError && <p className="text-xs text-[var(--color-critical)]">{writeError}</p>}
+
+        {decided.length > 0 && (
+          <div className="border-t border-[var(--color-hairline)] pt-3">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-xs text-[var(--color-ink-secondary)] hover:text-[var(--color-ink)]"
+              aria-expanded={showDecided}
+              onClick={() => setShowDecided((v) => !v)}
+            >
+              <ChevronDown
+                className={cn("size-3.5 transition-transform", showDecided && "rotate-180")}
+                aria-hidden
+              />
+              {data.kept.length} kept · {data.cancelled.length} cancelled
+            </button>
+            {showDecided && (
+              <ul className="mt-2 divide-y divide-[var(--color-hairline)]">
+                {decided.map((r) => {
+                  const cancelled = data.cancelled.includes(r)
+                  return (
+                    <li key={r.key} className="flex items-center gap-3 py-2 text-sm">
+                      <span className="min-w-0 flex-1 truncate">{r.name}</span>
+                      <Badge variant={cancelled ? "good" : "neutral"}>
+                        {cancelled ? "Cancelled" : "Kept"}
+                        {r.markedAt ? ` ${dateLabel(r.markedAt)}` : ""}
+                      </Badge>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy === r.key}
+                        onClick={() => mark(r.key, null)}
+                      >
+                        {busy === r.key ? <Spinner /> : <Undo2 />}
+                        Undo
+                      </Button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function CancelRow({
+  r,
+  alert = false,
+  busy,
+  actions,
+}: {
+  r: ReviewItem
+  alert?: boolean
+  busy: boolean
+  actions: React.ReactNode
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-3 rounded-lg border p-3.5 sm:flex-row sm:items-center",
+        alert
+          ? "border-[var(--color-critical)]/40 bg-[var(--color-critical)]/5"
+          : "border-[var(--color-hairline)]",
+      )}
+    >
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          {alert && (
+            <AlertTriangle
+              className="size-3.5 self-center text-[var(--color-critical)]"
+              aria-hidden
+            />
+          )}
+          <span className="truncate text-sm font-medium">{r.name}</span>
+          <span className="tnum text-xs text-[var(--color-ink-secondary)]">
+            {money(r.perMonth, true)}/mo · {cadenceLabel[r.cadence] ?? r.cadence}
+          </span>
+        </div>
+        <ul className="space-y-0.5">
+          {r.reasons.map((reason) => (
+            <li
+              key={reason}
+              className={cn(
+                "text-xs",
+                alert && reason === r.reasons[0]
+                  ? "font-medium text-[var(--color-critical)]"
+                  : "text-[var(--color-ink-muted)]",
+              )}
+            >
+              {reason}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {busy ? <Spinner /> : actions}
+      </div>
+    </div>
   )
 }

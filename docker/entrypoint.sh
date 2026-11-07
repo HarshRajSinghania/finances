@@ -15,8 +15,18 @@ if [ -n "$(find "$FINANCES_PDF_DIR" -iname '*.pdf' 2>/dev/null | head -n 1)" ]; 
         && finances categorize apply \
         && finances check \
         || echo "finances: reading the statements failed; serving what is already stored." >&2
-else
-    echo "finances: no PDFs in ./PDFs yet. Drop them there and restart, or onto the dashboard."
+fi
+
+if [ -n "$(find "$FINANCES_PDF_DIR" -type f \( -iname '*.csv' -o -iname '*.ofx' \
+        -o -iname '*.qfx' -o -iname '*.qbo' -o -iname '*.xml' -o -iname '*.sta' \
+        -o -iname '*.mt940' -o -iname '*.txt' \) 2>/dev/null | head -n 1)" ]; then
+    # Bank exports sit beside the PDFs; unchanged files are skipped here too.
+    finances import "$FINANCES_PDF_DIR" \
+        || echo "finances: some exports could not be read; see above." >&2
+fi
+
+if [ -z "$(find "$FINANCES_PDF_DIR" -type f 2>/dev/null | head -n 1)" ]; then
+    echo "finances: nothing in ./PDFs yet. Drop statements or bank exports there and restart, or onto the dashboard."
 fi
 
 exec finances web

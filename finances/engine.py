@@ -92,6 +92,10 @@ class Engine:
         self._txns: list[Transaction] | None = txns
         self._recurring: list[Recurring] | None = None
         self._statements: list[Statement] | None = None
+        # Every total is in one currency. Rows in another one with no rate set
+        # are held out and counted here, so a caller can say so.
+        self.currency: str = "USD"
+        self.fx_missing: Counter = Counter()
 
     @classmethod
     def from_source(cls, source: str = DEFAULT_DB) -> "Engine":
@@ -116,7 +120,10 @@ class Engine:
     @property
     def transactions(self) -> list[Transaction]:
         if self._txns is None:
-            self._txns = self.db.transactions()
+            from finances.fx import base_currency, rates, to_base
+            self.currency = base_currency(self.db)
+            self._txns, self.fx_missing = to_base(
+                self.db.transactions(), self.currency, rates(self.db))
         return self._txns
 
     def with_transactions(self, rows: list[Transaction]) -> "Engine":
@@ -134,6 +141,8 @@ class Engine:
         view._txns = rows
         view._recurring = None
         view._statements = self._statements
+        view.currency = self.currency
+        view.fx_missing = self.fx_missing
         return view
 
     def attach_statements(self, stmts: list[Statement]):

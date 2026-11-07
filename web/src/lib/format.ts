@@ -6,23 +6,53 @@
  * two different pages.
  */
 
-const usd = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0,
-})
+/**
+ * Every total is in the store's one base currency (see `finances fx`). It is
+ * module state rather than a prop because it is set once, from the summary,
+ * and every formatter on every page has to agree with it.
+ */
+let currency = "USD"
+let whole = makeFormat(0, 0)
+let cents = makeFormat(2, 2)
 
-const usdCents = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
+function makeFormat(min: number, max: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: min,
+    maximumFractionDigits: max,
+  })
+}
+
+/** Switch the base currency. An unknown code keeps the previous one. */
+export function setCurrency(code: string | null | undefined): void {
+  const next = (code || "USD").toUpperCase()
+  if (next === currency) return
+  const prev = currency
+  try {
+    currency = next
+    whole = makeFormat(0, 0)
+    cents = makeFormat(2, 2)
+  } catch {
+    currency = prev
+    whole = makeFormat(0, 0)
+    cents = makeFormat(2, 2)
+  }
+}
+
+export function getCurrency(): string {
+  return currency
+}
+
+/** The bare symbol for the base currency: `$`, `€`, `£`. */
+function symbol(): string {
+  return whole.formatToParts(0).find((p) => p.type === "currency")?.value ?? currency
+}
 
 /** `$1,234`. Pass cents when the exact figure matters (a single charge). */
-export function money(v: number | null | undefined, cents = false): string {
+export function money(v: number | null | undefined, withCents = false): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—"
-  return cents ? usdCents.format(v) : usd.format(v)
+  return withCents ? cents.format(v) : whole.format(v)
 }
 
 /** `$1,234` / `-$1,234`, but always with an explicit sign. For deltas. */
@@ -37,9 +67,10 @@ export function moneyCompact(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—"
   const a = Math.abs(v)
   const sign = v < 0 ? "−" : ""
-  if (a >= 1_000_000) return `${sign}$${(a / 1_000_000).toFixed(1)}M`
-  if (a >= 1_000) return `${sign}$${(a / 1_000).toFixed(a >= 10_000 ? 0 : 1)}k`
-  return `${sign}$${Math.round(a)}`
+  const sym = symbol()
+  if (a >= 1_000_000) return `${sign}${sym}${(a / 1_000_000).toFixed(1)}M`
+  if (a >= 1_000) return `${sign}${sym}${(a / 1_000).toFixed(a >= 10_000 ? 0 : 1)}k`
+  return `${sign}${sym}${Math.round(a)}`
 }
 
 export function percent(v: number | null | undefined, dp = 0): string {
@@ -117,5 +148,5 @@ export const cadenceLabel: Record<string, string> = {
 
 /** Strip the extension so a filename reads as a title. */
 export function fileLabel(name: string): string {
-  return name.replace(/\.pdf$/i, "").replace(/[_]+/g, " ")
+  return name.replace(/\.(pdf|csv|tsv|ofx|qfx|qbo|xml|sta|mt940|940|txt)$/i, "").replace(/[_]+/g, " ")
 }

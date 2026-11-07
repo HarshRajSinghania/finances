@@ -25,8 +25,19 @@ Endpoints
     GET  /api/recurring      subscriptions, with price drift and next due date
     GET  /api/merchants      top merchants
     GET  /api/anomalies      duplicates, outliers and the largest charges
-    POST /api/upload         multipart PDF upload, parsed straight into the store
+    GET  /api/wrapped        a year in review (?year=2025)
+    GET  /api/budgets        this month against each category's limit
+    GET  /api/goals          savings goals against the real monthly surplus
+    GET  /api/subscriptions/review   the cancel list
+    POST /api/upload         statement PDFs or bank exports, read straight into the store
+    POST /api/budgets        {"category": "Dining", "limit": 300}  (null removes)
+    POST /api/goals          {"name": "Trip", "target": 3000, "by": "2027-06"}
+    POST /api/subscriptions/mark   {"key": "NETFLIX", "status": "keep"|"cancelled"|null}
     DELETE /api/statements/<source_file>
+    DELETE /api/goals/<name>
+
+Every write must come from a page on localhost with a JSON body, so another
+website open in the same browser cannot change budgets behind your back.
 
 In production it also serves the built frontend from ``web/dist``.
 """
@@ -51,13 +62,28 @@ from finances.database import DEFAULT_DB, FinanceDB
 from finances.engine import Engine, NON_SPEND
 from finances.utils import merchant_key
 
-# The repository root: the package lives one level down, the dashboard beside it.
+# The repository root, when running from a checkout: the package lives one
+# level down and the dashboard source beside it.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PACKAGE = os.path.dirname(os.path.abspath(__file__))
 
-# Both overridable so a container (or anyone running from another directory)
-# can keep the code in one place and the data in another.
-PDF_DIR = os.environ.get("FINANCES_PDF_DIR") or os.path.join(ROOT, "PDFs")
-WEB_DIST = os.environ.get("FINANCES_WEB_DIST") or os.path.join(ROOT, "web", "dist")
+
+def _web_dist() -> str:
+    """Where the built dashboard is: a checkout's web/dist, else the copy in the wheel."""
+    if os.environ.get("FINANCES_WEB_DIST"):
+        return os.environ["FINANCES_WEB_DIST"]
+    checkout = os.path.join(ROOT, "web", "dist")
+    if os.path.isdir(checkout) or os.path.exists(os.path.join(ROOT, "web", "package.json")):
+        return checkout
+    return os.path.join(PACKAGE, "web_dist")
+
+
+# Overridable so a container (or anyone running from another directory) can
+# keep the code in one place and the data in another. Uploads land next to
+# wherever finances.db is used from, the same way every CLI tool resolves it.
+PDF_DIR = os.environ.get("FINANCES_PDF_DIR") or os.path.join(os.getcwd(), "PDFs")
+PLAN_PATH = os.environ.get("FINANCES_PLAN") or "plan.json"
+WEB_DIST = _web_dist()
 MAX_UPLOAD = 32 * 1024 * 1024          # a statement PDF is tens of KB; 32MB is generous
 
 # Names a browser may use to reach this server. Anything else in the Host header
@@ -67,7 +93,7 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
 # One writer at a time. Parsing mutates the store, and two uploads landing
 # together would race on the same SQLite file.
-_parse_lock = threading.Lock()
+_parse_lock = threading.RLock()
 
 
 # --------------------------------------------------------------------------
@@ -213,6 +239,8 @@ class Api:
                     for i, l in sorted({(t.issuer, t.account_last4)
                                         for t in eng.transactions if t.issuer})
                 ],
+                "currency": eng.currency,
+                "fxMissing": dict(eng.fx_missing),
             }
 
     def statements(self, q) -> dict:
@@ -356,13 +384,126 @@ class Api:
                 "largest": [_txn_dict(t) for t in a["big"]],
             }
 
+    def wrapped(self, q) -> dict:
+        from finances.wrapped import wrapped
+        with self.engine() as eng:
+            try:
+                year = int(q["year"]) if q.get("year") else None
+            except ValueError:
+                year = None
+            return wrapped(eng, year)
+
+    def budgets(self, q) -> dict:
+        from finances.budgets import status
+        with self.engine() as eng:
+            return status(eng)
+
+    def subscription_review(self, q) -> dict:
+        from finances.budgets import review
+        with self.engine() as eng:
+            rv = review(eng)
+            def item(i):
+                d = _recurring_dict(i["r"])
+                d["reasons"] = i["reasons"]
+                d["markedAt"] = i["mark"].get("at")
+                return d
+            return {k: ([item(i) for i in v] if isinstance(v, list) else v)
+                    for k, v in rv.items()}
+
+    def goals(self, q) -> dict:
+        from finances.planner import load_plan, plan_goals
+        plan = load_plan(PLAN_PATH)
+        with self.engine() as eng:
+            surplus = plan.get("monthly_surplus")
+            source = "plan"
+            if surplus is None:
+                surplus, source = eng.surplus(), "statements"
+            committed = eng.committed_monthly()
+        goals, left = plan_goals(plan, surplus)
+        return {
+            "surplus": round(surplus, 2) if surplus is not None else None,
+            "surplusSource": source if surplus is not None else None,
+            "committedMonthly": round(committed, 2),
+            "unallocated": round(left, 2) if surplus is not None else None,
+            "goals": [{
+                "name": g["name"], "target": g["target"], "saved": g.get("saved", 0.0),
+                "by": g.get("by"), "priority": g.get("priority", 3),
+                "monthly": g.get("monthly"), "note": g.get("note"),
+                "remaining": round(g["remaining"], 2),
+                "allocated": round(g["allocated"], 2),
+                "required": round(g["required"], 2) if g["required"] is not None else None,
+                "eta": g.get("eta"), "late": g.get("late", False),
+                "pct": round(min(g.get("saved", 0.0) / g["target"] * 100, 100), 1)
+                       if g["target"] else 0.0,
+            } for g in goals],
+        }
+
     # -- writes ----------------------------------------------------------
+    def set_budget(self, body: dict) -> dict:
+        from finances.budgets import set_budget
+        cat = str(body.get("category") or "").strip()
+        if not cat:
+            raise ValueError("category is required")
+        limit = body.get("limit")
+        with self.engine() as eng:
+            set_budget(eng, cat, None if limit in (None, "") else float(limit))
+        return self.budgets({})
+
+    def mark_subscription(self, body: dict) -> dict:
+        from finances.budgets import mark
+        key = str(body.get("key") or "").strip()
+        state = body.get("status")
+        if not key or state not in ("keep", "cancelled", None):
+            raise ValueError("key and a status of keep, cancelled or null are required")
+        with self.engine() as eng:
+            mark(eng, key, state)
+        return self.subscription_review({})
+
+    def save_goal(self, body: dict) -> dict:
+        from finances.planner import find_goal, load_plan, save_plan
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise ValueError("a goal needs a name")
+        plan = load_plan(PLAN_PATH)
+        g = next((g for g in plan["goals"] if g["name"].lower() == name.lower()), None)
+        fields = {}
+        for k in ("target", "saved", "monthly"):
+            if body.get(k) not in (None, ""):
+                fields[k] = float(body[k])
+        if body.get("priority") not in (None, ""):
+            fields["priority"] = int(body["priority"])
+        if "by" in body:
+            fields["by"] = (str(body["by"])[:7] or None) if body["by"] else None
+        if g is None:
+            if "target" not in fields:
+                raise ValueError("a new goal needs a target")
+            plan["goals"].append({"name": name, "saved": 0.0, "priority": 3,
+                                  "by": None, "monthly": None, "note": None,
+                                  "created": date.today().isoformat(), "done": False,
+                                  **fields})
+        else:
+            g.update(fields)
+        save_plan(plan, PLAN_PATH)
+        return self.goals({})
+
+    def delete_goal(self, name: str) -> dict:
+        from finances.planner import load_plan, save_plan
+        name = urllib.parse.unquote(name)
+        plan = load_plan(PLAN_PATH)
+        plan["goals"] = [g for g in plan["goals"] if g["name"] != name]
+        save_plan(plan, PLAN_PATH)
+        return self.goals({})
+
     def upload(self, filename: str, blob: bytes) -> dict:
         """Save an uploaded PDF and parse it straight into the store."""
+        from finances.importer import EXTENSIONS
         safe = re.sub(r"[^A-Za-z0-9 ._-]", "_", os.path.basename(filename)).strip()
-        if not safe.lower().endswith(".pdf"):
-            return {"ok": False, "error": "Only PDF statements can be uploaded."}
-        if not blob.startswith(b"%PDF"):
+        ext = os.path.splitext(safe)[1].lower()
+        is_pdf = ext == ".pdf"
+        if not is_pdf and ext not in EXTENSIONS:
+            return {"ok": False, "error": "Upload a statement PDF, or a bank export "
+                                          "(CSV, OFX, QFX, CAMT.053 XML, MT940)."}
+        if is_pdf and not blob.startswith(b"%PDF"):
             return {"ok": False,
                     "error": f"{safe} is not a PDF — it does not start with %PDF."}
 
@@ -377,12 +518,13 @@ class Api:
         # the upload would land in a different store from the one being served.
         db_path = os.path.abspath(self.db_path)
         csv_out = os.path.join(os.path.dirname(db_path), "cleanedData", "transactions.csv")
+        cmd = ([sys.executable, "-m", "finances.parse", dest,
+                "--db", db_path, "-o", csv_out, "--force"] if is_pdf else
+               [sys.executable, "-m", "finances.importer", dest, "--db", db_path, "--force"])
         with _parse_lock:
-            proc = subprocess.run(
-                [sys.executable, "-m", "finances.parse", dest,
-                 "--db", db_path, "-o", csv_out, "--force"],
-                capture_output=True, text=True, cwd=ROOT,
-            )
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  cwd=ROOT if os.path.isdir(os.path.join(ROOT, "finances"))
+                                  else None)
         ok = proc.returncode == 0
 
         result: dict = {"ok": ok, "file": safe, "replaced": replaced,
@@ -398,12 +540,16 @@ class Api:
             result["error"] = "Could not parse this statement."
             return result
 
+        def mine(source):
+            # A multi-account export is stored as "file.ofx#1234" per account.
+            return source == safe or source.startswith(safe + "#")
+
         with self.engine() as eng:
-            stmt = next((s for s in eng.statements() if s.source_file == safe), None)
+            stmt = next((s for s in eng.statements() if mine(s.source_file)), None)
             result["statement"] = _statement_dict(stmt) if stmt else None
             result["coverage"] = _coverage_dict(eng.coverage())
             result["transactionCount"] = sum(
-                1 for t in eng.transactions if t.source_file == safe)
+                1 for t in eng.transactions if mine(t.source_file))
         return result
 
     def delete_statement(self, source_file: str) -> dict:
@@ -493,13 +639,16 @@ class Handler(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
 
         if path.startswith("/api/"):
-            name = path[5:].strip("/").replace("-", "_")
+            name = path[5:].strip("/")
             fn = {"health": self.api.health, "summary": self.api.summary,
                   "statements": self.api.statements,
                   "transactions": self.api.transactions,
                   "categories": self.api.categories, "months": self.api.months,
                   "recurring": self.api.recurring, "merchants": self.api.merchants,
-                  "anomalies": self.api.anomalies}.get(name)
+                  "anomalies": self.api.anomalies, "wrapped": self.api.wrapped,
+                  "budgets": self.api.budgets, "goals": self.api.goals,
+                  "subscriptions/review": self.api.subscription_review,
+                  }.get(name)
             if not fn:
                 return self._send_json({"error": f"no endpoint {name}"}, 404)
             try:
@@ -516,8 +665,37 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self._refuse_foreign():
             return
-        if urllib.parse.urlparse(self.path).path != "/api/upload":
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/api/upload":
+            return self._upload()
+        handler = {"/api/budgets": self.api.set_budget,
+                   "/api/goals": self.api.save_goal,
+                   "/api/subscriptions/mark": self.api.mark_subscription}.get(path)
+        if not handler:
             return self._send_json({"error": "not found"}, 404)
+        # A JSON content type cannot be sent cross-site without a preflight,
+        # which this server never answers, so a form on another site cannot
+        # post here even if the Origin check were somehow passed.
+        if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+            return self._send_json({"error": "send application/json"}, 415)
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            return self._send_json({"error": "bad Content-Length"}, 400)
+        if not 0 < length <= 64 * 1024:
+            return self._send_json({"error": "body missing or too large"}, 400)
+        try:
+            body = json.loads(self.rfile.read(length))
+            if not isinstance(body, dict):
+                raise ValueError("expected a JSON object")
+            with _parse_lock:
+                return self._send_json(handler(body))
+        except (ValueError, TypeError) as e:
+            return self._send_json({"error": str(e)}, 400)
+        except Exception as e:                           # noqa: BLE001
+            return self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
+    def _upload(self):
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
@@ -543,11 +721,15 @@ class Handler(BaseHTTPRequestHandler):
         if self._refuse_foreign():
             return
         path = urllib.parse.urlparse(self.path).path
-        if not path.startswith("/api/statements/"):
+        if path.startswith("/api/statements/"):
+            fn, arg = self.api.delete_statement, path[len("/api/statements/"):]
+        elif path.startswith("/api/goals/"):
+            fn, arg = self.api.delete_goal, path[len("/api/goals/"):]
+        else:
             return self._send_json({"error": "not found"}, 404)
         try:
-            return self._send_json(
-                self.api.delete_statement(path[len("/api/statements/"):]))
+            with _parse_lock:
+                return self._send_json(fn(arg))
         except Exception as e:                           # noqa: BLE001
             return self._send_json({"error": str(e)}, 500)
 

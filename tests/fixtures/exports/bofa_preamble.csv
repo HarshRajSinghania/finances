@@ -1,0 +1,9 @@
+Description,,Summary Amt.
+Beginning balance as of 02/01/2026,,"1,000.00"
+Ending balance as of 02/28/2026,,"1,234.50"
+
+Date,Description,Amount,Running Bal.
+02/01/2026,Beginning balance as of 02/01/2026,,"1,000.00"
+02/03/2026,"PAYROLL DEPOSIT","1,500.00","2,500.00"
+02/10/2026,"RENT PAYMENT","-1,200.00","1,300.00"
+02/15/2026,"GROCERY STORE","-65.50","1,234.50"

@@ -1047,6 +1047,9 @@ def parse_statement(path, password=None, amount_col="auto",
                           period_start=opening.isoformat() if opening else "",
                           period_end=closing.isoformat() if closing else "",
                           charges_extracted=out_total, credits_extracted=in_total,
+                          source_format="pdf",
+                          account_type="card" if (fields.get("credit_limit")
+                                                  or fields.get("purchase_apr")) else "",
                           **fields)
     reconcile(statement, txns, extra_note=balance_note)
 
@@ -1262,7 +1265,19 @@ def main():
     ap.add_argument("--strict", action="store_true",
                     help="exit non-zero if any statement fails to reconcile "
                          "against its own printed totals")
+    ap.add_argument("--llm", action="store_true", default=None,
+                    help="when a statement's layout is not understood, have a local "
+                         "model read it; kept only if it matches the printed totals "
+                         "(also FINANCES_LLM_FALLBACK=1)")
+    ap.add_argument("--llm-model", help="local model to use (default: largest that fits)")
+    ap.add_argument("--llm-endpoint", help="OpenAI-compatible local server URL")
+    ap.add_argument("--llm-accept-unverified", action="store_true",
+                    help="keep the model's rows even when they do not reconcile "
+                         "(labelled unverified)")
     args = ap.parse_args()
+    if args.llm is None:
+        from finances.llm_parse import enabled_by_env
+        args.llm = enabled_by_env()
 
     pdfs = _find_pdfs(args.input)
     if not pdfs:
@@ -1328,6 +1343,17 @@ def main():
         _report_file(name, txns, meta)
         unmatched.extend(meta["unmatched"])
         statement = meta["statement"]
+        if args.llm:
+            from finances import llm_parse
+            if llm_parse.needs_help(txns, statement):
+                better = llm_parse.fallback(
+                    path, statement, endpoint=args.llm_endpoint, model=args.llm_model,
+                    password=args.password,
+                    accept_unverified=args.llm_accept_unverified)
+                if better:
+                    txns, statement = better
+                    _print_reconcile(statement)
+                    print()
         if db is not None:
             db.upsert_transactions(txns)
             db.upsert_statements([statement])

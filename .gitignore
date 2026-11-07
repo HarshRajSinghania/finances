@@ -1,5 +1,8 @@
 *.csv
 *.txt
+# ...except the made-up bank exports the importer tests read
+!tests/fixtures/**/*.csv
+!tests/fixtures/**/*.txt
 cleanedData
 PDFs
 # docker compose keeps the store and reports here
@@ -19,6 +22,8 @@ dist
 # Web dashboard
 web/node_modules
 web/dist
+# the dashboard copied into the wheel at release time
+finances/web_dist/
 web/.vite
 *.tsbuildinfo
 

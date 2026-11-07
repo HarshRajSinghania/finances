@@ -444,6 +444,34 @@ BRANDS = {
     ],
 }
 
+
+# Europe and the UK. Bank exports there carry the counterparty's own name, and
+# a rule set grown on US card statements has never seen any of them.
+EUROPE = {
+    "Groceries": [
+        "REWE", "EDEKA", "LIDL", "NETTO", "KAUFLAND", "PENNY", "ALBERT HEIJN",
+        "JUMBO", "CARREFOUR", "LECLERC", "INTERMARCHE", "AUCHAN", "MONOPRIX",
+        "FRANPRIX", "MERCADONA", "ESSELUNGA", "CONAD", "COOP", "TESCO",
+        "SAINSBURYS", "SAINSBURY", "ASDA", "MORRISONS", "WAITROSE", "OCADO",
+        "MIGROS", "BILLA", "SPAR", "HOFER", "DELHAIZE", "COLRUYT", "BIEDRONKA",
+    ],
+    "Utilities": [
+        "STADTWERKE", "VATTENFALL", "EON", "E ON", "ENGIE", "EDF", "ENECO",
+        "OCTOPUS ENERGY", "BRITISH GAS", "THAMES WATER", "ENDESA", "IBERDROLA",
+        "ENEL",
+    ],
+    "Phone/Internet": [
+        "TELEKOM", "DEUTSCHE TELEKOM", "VODAFONE", "KPN", "ORANGE", "SFR",
+        "BOUYGUES", "FREE MOBILE", "MOVISTAR", "TIM", "BT GROUP", "SKY",
+    ],
+    "Transport": [
+        "DEUTSCHE BAHN", "DB VERTRIEB", "NS GROEP", "SNCF", "RENFE", "TRENITALIA",
+        "TFL", "TRAINLINE", "BOLT", "FREENOW", "BVG", "RATP",
+    ],
+}
+for _cat, _names in EUROPE.items():
+    BRANDS.setdefault(_cat, []).extend(_names)
+
 # Longest phrases first so "WHOLE FOODS" wins over "FOODS"
 _BRAND_INDEX = {}
 for _cat, _names in BRANDS.items():
@@ -498,6 +526,7 @@ CONTEXT = [
 # Square is used by barbers and bakeries alike and so says nothing.
 PROCESSOR_CATEGORY = {"instacart": "Groceries", "eventbrite": "Entertainment",
                       "toast": "Dining", "ticketmaster": "Entertainment"}
+
 
 # Bank statement lines name their own transaction type, and that name is the
 # most reliable thing on the row — more reliable than the merchant, which for
@@ -561,6 +590,15 @@ PRIORITY_PHRASES = [
     ("DIRECT DEPOSIT", "Income", "direct deposit"),
     ("DIRECT DEP", "Income", "direct deposit"),
     ("PAYROLL", "Income", "payroll"),
+    ("GEHALT", "Income", "salary"),
+    ("SALARIS", "Income", "salary"),
+    ("SALAIRE", "Income", "salary"),
+    ("NOMINA", "Income", "salary"),
+    ("STIPENDIO", "Income", "salary"),
+    ("MIETE", "Rent/Housing", "rent"),
+    ("HUUR", "Rent/Housing", "rent"),
+    ("LOYER", "Rent/Housing", "rent"),
+    ("ALQUILER", "Rent/Housing", "rent"),
     ("TAX REF", "Income", "tax refund"),
     ("INTEREST PAID", "Income", "interest earned"),
     ("MOBILE DEPOSIT", "Income", "deposit"),
@@ -678,7 +716,8 @@ class Categorizer:
         self.learned = {}
         if learned_path and os.path.exists(learned_path):
             try:
-                data = json.load(open(learned_path))
+                with open(learned_path) as fh:
+                    data = json.load(fh)
                 self.learned = data.get("merchants", {})
             except (json.JSONDecodeError, OSError):
                 pass

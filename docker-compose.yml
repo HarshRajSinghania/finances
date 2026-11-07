@@ -13,12 +13,18 @@ services:
       - "127.0.0.1:8787:8787"
     volumes:
       - ./data:/data            # the store, learned rules, generated reports
-      - ./PDFs:/data/PDFs       # your statements, read-write so uploads land here
+      - ./PDFs:/data/PDFs       # statements and bank exports, read-write so uploads land here
     environment:
       # For `finances ask` and `finances enrich`. Points at the ollama service
       # below; on a Mac, Ollama running natively is much faster (Docker has no
       # GPU there): use http://host.docker.internal:11434/v1 instead.
       FINANCES_LLM_ENDPOINT: ${FINANCES_LLM_ENDPOINT:-http://ollama:11434/v1}
+      # Set to 1 to let that model read statement layouts the parser does not
+      # know. Its rows are kept only if they match the statement's totals.
+      FINANCES_LLM_FALLBACK: ${FINANCES_LLM_FALLBACK:-0}
+      # Totals are reported in this currency; others are converted at rates
+      # set with `finances fx`.
+      FINANCES_CURRENCY: ${FINANCES_CURRENCY:-}
     restart: unless-stopped
 
   demo:

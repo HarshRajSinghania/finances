@@ -33,6 +33,9 @@ class Transaction:
     # Two $3.00 tap-ins on the same morning are two real charges, not a double
     # parse; without this they collide on the primary key and one is lost.
     seq: int = 0
+    # ISO 4217 code the amount is in. "" means the store's base currency, which
+    # is every row a US statement PDF produces; bank exports name theirs.
+    currency: str = ""
 
     def __post_init__(self):
         if not self.direction:
@@ -67,6 +70,7 @@ class Transaction:
             statement_period=row.get("statement_period") or "",
             source_file=row.get("source_file") or "",
             seq=int(row.get("seq") or 0),
+            currency=(row.get("currency") or "").upper(),
         )
 
     def to_row(self) -> dict:
@@ -136,6 +140,11 @@ class Statement:
     reconciled: int | None = None        # 1 ok, 0 mismatch, None nothing to check
     reconcile_diff: float | None = None  # extracted charges - printed purchases
     reconcile_note: str = ""             # why it could not be checked, or what broke
+
+    # -- provenance -------------------------------------------------------
+    currency: str = ""                   # ISO 4217, "" for the base currency
+    account_type: str = ""               # "card" | "bank" | "" when unknown
+    source_format: str = ""              # pdf, pdf+llm, csv, ofx, camt053, mt940
 
     @classmethod
     def columns(cls) -> list[str]:

@@ -18,7 +18,7 @@ import type { Coverage, UploadResult } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /**
- * Drop statement PDFs in; get back what the parser actually made of them.
+ * Drop statement PDFs or bank exports in; get back what was actually made of them.
  *
  * The API parses on upload, so the response already carries the reconciliation
  * verdict. That makes "uploaded" the wrong thing to report: what the user needs
@@ -32,6 +32,11 @@ import { cn } from "@/lib/utils"
  */
 
 type Phase = "waiting" | "sending" | "parsing"
+
+/** What the API reads: statement PDFs, and the exports nearly every bank offers. */
+const ACCEPTED = /\.(pdf|csv|tsv|ofx|qfx|qbo|xml|sta|mt940|940|txt)$/i
+const ACCEPT_ATTR =
+  ".pdf,application/pdf,.csv,text/csv,.tsv,.ofx,.qfx,.qbo,.xml,.sta,.mt940,.940,.txt"
 
 interface QueueItem {
   name: string
@@ -65,10 +70,10 @@ export function UploadDropzone({
     async (picked: File[]) => {
       if (running.current || picked.length === 0) return
 
-      // The API refuses anything that is not a PDF anyway; saying so before the
+      // The API refuses anything it cannot read anyway; saying so before the
       // round trip gives the same answer without the wait.
-      const pdfs = picked.filter((f) => /\.pdf$/i.test(f.name))
-      const notPdfs = picked.filter((f) => !/\.pdf$/i.test(f.name))
+      const pdfs = picked.filter((f) => ACCEPTED.test(f.name))
+      const notPdfs = picked.filter((f) => !ACCEPTED.test(f.name))
 
       running.current = true
       setCoverage(null)
@@ -76,7 +81,8 @@ export function UploadDropzone({
         notPdfs.map((f) => ({
           ok: false,
           file: f.name,
-          error: "Only PDF statements can be uploaded.",
+          error:
+            "Upload a statement PDF or a bank export (CSV, OFX/QFX, CAMT.053, MT940).",
         })),
       )
       setQueue(pdfs.map((f) => ({ name: f.name, pct: 0, phase: "waiting" as Phase })))
@@ -169,7 +175,7 @@ export function UploadDropzone({
 
         <div className={cn("min-w-0", variant === "full" ? "space-y-1" : "flex-1")}>
           <p className="text-sm font-medium">
-            {dragging ? "Drop to add these statements" : "Add statement PDFs"}
+            {dragging ? "Drop to add these statements" : "Add statements or bank exports"}
           </p>
           <p
             className={cn(
@@ -179,16 +185,16 @@ export function UploadDropzone({
           >
             {variant === "full" ? (
               <>
-                Drop the statement PDFs you downloaded from your bank or card issuer —
-                or pick them from disk. Each one is parsed on arrival and its
-                transactions are checked against the totals the statement prints, so
-                you can see straight away whether the extraction can be trusted.
+                Drop statement PDFs or bank exports — CSV, OFX/QFX, CAMT.053, MT940 —
+                downloaded from your bank or card issuer, or pick them from disk. Each
+                one is read on arrival and checked against the totals or balances it
+                prints, so you can see straight away whether it can be trusted.
                 Nothing is sent anywhere; the parsing happens on this machine.
               </>
             ) : (
               <>
-                Drop them here, or choose files. Each is parsed on arrival and checked
-                against the totals printed on the statement.
+                Drop them here, or choose files. Each is read on arrival and checked
+                against the totals or balances it prints.
               </>
             )}
           </p>
@@ -207,10 +213,10 @@ export function UploadDropzone({
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,application/pdf"
+          accept={ACCEPT_ATTR}
           multiple
           className="sr-only"
-          aria-label="Statement PDFs to upload"
+          aria-label="Statement PDFs or bank exports to upload"
           onChange={(e) => {
             void start(Array.from(e.target.files ?? []))
             e.target.value = ""

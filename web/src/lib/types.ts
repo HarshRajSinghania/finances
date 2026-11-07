@@ -61,6 +61,10 @@ export interface Summary {
   subscriptionCount: number
   coverage: Coverage
   accounts: Account[]
+  /** ISO 4217 code every total is in. */
+  currency: string
+  /** Rows held out of the totals because their currency has no rate set. */
+  fxMissing: Record<string, number>
 }
 
 export interface Statement {
@@ -207,4 +211,117 @@ export interface UploadResult {
 export interface UploadResponse {
   results: UploadResult[]
   uploaded: number
+}
+
+/* ------------------------------------------------------------ wrapped */
+
+export interface Wrapped {
+  year: number | null
+  years: number[]
+  empty: boolean
+  months?: string[]
+  fullYear?: boolean
+  total?: number
+  transactions?: number
+  perDay?: number
+  perMonth?: number
+  income?: number | null
+  kept?: number | null
+  topCategories?: { category: string; total: number; share: number; count: number }[]
+  topMerchants?: { name: string; total: number; visits: number }[]
+  favourite?: { name: string; visits: number; total: number }
+  biggest?: { name: string; amount: number; date: string; category: string }
+  biggestDay?: { date: string; total: number }
+  biggestMonth?: { month: string; total: number }
+  quietestMonth?: { month: string; total: number }
+  byMonth?: { month: string; total: number }[]
+  weekday?: string | null
+  newMerchants?: number
+  merchants?: number
+  subscriptions?: { count: number; paid: number; perYear: number }
+  vsLastYear?: { months: number; now: number; then: number; pct: number } | null
+  /** Share of the year's purchases that come from a statement that reconciles. */
+  traced?: number
+}
+
+/* ------------------------------------------------------------ budgets */
+
+export type BudgetState = "over" | "pace" | "ok"
+
+export interface BudgetRow {
+  category: string
+  limit: number
+  spent: number
+  projected: number
+  lastMonth: number
+  average: number
+  left: number
+  state: BudgetState
+  pct: number
+}
+
+export interface BudgetStatus {
+  month: string | null
+  asOf?: string
+  inProgress?: boolean
+  daysElapsed?: number
+  daysInMonth?: number
+  budgets: BudgetRow[]
+  suggestions: { category: string; average: number; suggested: number }[]
+  totalLimit?: number
+  totalSpent?: number
+}
+
+/* -------------------------------------------------------------- goals */
+
+export interface Goal {
+  name: string
+  target: number
+  saved: number
+  by: string | null
+  priority: number
+  monthly: number | null
+  note: string | null
+  remaining: number
+  allocated: number
+  required: number | null
+  eta: string | null
+  late: boolean
+  pct: number
+}
+
+export interface Goals {
+  surplus: number | null
+  surplusSource: "plan" | "statements" | null
+  committedMonthly: number
+  unallocated: number | null
+  goals: Goal[]
+}
+
+export interface GoalInput {
+  name: string
+  target?: number
+  saved?: number
+  by?: string | null
+  priority?: number
+  monthly?: number
+}
+
+/* -------------------------------------------------------- cancel list */
+
+export interface ReviewItem extends Recurring {
+  reasons: string[]
+  markedAt: string | null
+}
+
+export type SubscriptionMark = "keep" | "cancelled" | null
+
+export interface SubscriptionReview {
+  candidates: ReviewItem[]
+  kept: ReviewItem[]
+  cancelled: ReviewItem[]
+  stillCharging: ReviewItem[]
+  gone: ReviewItem[]
+  savingsPerYear: number
+  savedPerYear: number
 }

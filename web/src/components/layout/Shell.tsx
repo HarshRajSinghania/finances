@@ -1,5 +1,8 @@
 import {
+  AlertTriangle,
+  CalendarHeart,
   FileText,
+  Gauge,
   LayoutDashboard,
   Monitor,
   Moon,
@@ -25,6 +28,8 @@ const NAV = [
   { to: "/transactions", label: "Transactions", icon: Receipt },
   { to: "/subscriptions", label: "Subscriptions", icon: Repeat },
   { to: "/insights", label: "Insights", icon: Search },
+  { to: "/plan", label: "Budgets & goals", icon: Gauge },
+  { to: "/wrapped", label: "Wrapped", icon: CalendarHeart },
 ]
 
 export function Shell({
@@ -157,6 +162,7 @@ export function Shell({
           </header>
 
           <main className="min-w-0 flex-1 px-5 py-6 sm:px-8">
+            {summary && <FxNotice missing={summary.fxMissing} base={summary.currency} />}
             <Outlet />
           </main>
 
@@ -207,6 +213,44 @@ function ThemeToggle({
           <span className="sr-only">{label}</span>
         </button>
       ))}
+    </div>
+  )
+}
+
+/**
+ * Rows in a currency with no exchange rate are left out of every total rather
+ * than added to the base currency as if they were the same money. Saying so on
+ * every page keeps a smaller total from looking like a smaller life.
+ */
+function FxNotice({
+  missing,
+  base,
+}: {
+  missing: Record<string, number> | undefined
+  base: string | undefined
+}) {
+  const entries = Object.entries(missing ?? {})
+  if (entries.length === 0) return null
+  return (
+    <div
+      role="status"
+      className="mb-5 flex items-start gap-2.5 rounded-[var(--radius-card)] border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-4 py-3 text-xs leading-relaxed"
+    >
+      <AlertTriangle className="mt-0.5 size-3.5 shrink-0" strokeWidth={1.75} aria-hidden />
+      <div className="space-y-1">
+        {entries.map(([cur, n]) => (
+          <p key={cur}>
+            <span className="tnum font-medium">
+              {n.toLocaleString()} {cur}
+            </span>{" "}
+            {n === 1 ? "transaction isn't" : "transactions aren't"} counted in these{" "}
+            {base ?? ""} totals — set a rate with{" "}
+            <code className="rounded bg-[var(--color-plane)] px-1 py-0.5 font-mono">
+              finances fx {cur}=&lt;rate&gt;
+            </code>
+          </p>
+        ))}
+      </div>
     </div>
   )
 }

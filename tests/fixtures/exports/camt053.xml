@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+ <BkToCstmrStmt>
+  <GrpHdr><MsgId>1</MsgId><CreDtTm>2026-02-01T00:00:00</CreDtTm></GrpHdr>
+  <Stmt>
+   <Id>S1</Id>
+   <Acct><Id><IBAN>NL91ABNA0417164300</IBAN></Id><Ccy>EUR</Ccy><Svcr><FinInstnId><BIC>ABNANL2A</BIC></FinInstnId></Svcr></Acct>
+   <Bal><Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1000.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2026-01-01</Dt></Dt></Bal>
+   <Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1875.50</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2026-01-31</Dt></Dt></Bal>
+   <Ntry><Amt Ccy="EUR">1200.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts>BOOK</Sts><BookgDt><Dt>2026-01-25</Dt></BookgDt>
+     <NtryDtls><TxDtls><RltdPties><Dbtr><Nm>Werkgever BV</Nm></Dbtr></RltdPties><RmtInf><Ustrd>Salaris januari</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>
+   <Ntry><Amt Ccy="EUR">324.50</Amt><CdtDbtInd>DBIT</CdtDbtInd><Sts>BOOK</Sts><BookgDt><Dt>2026-01-10</Dt></BookgDt>
+     <NtryDtls><TxDtls><RltdPties><Cdtr><Nm>Albert Heijn</Nm></Cdtr></RltdPties><RmtInf><Ustrd>Boodschappen</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>
+   <Ntry><Amt Ccy="EUR">99.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><Sts>PDNG</Sts><BookgDt><Dt>2026-01-31</Dt></BookgDt></Ntry>
+  </Stmt>
+ </BkToCstmrStmt>
+</Document>
