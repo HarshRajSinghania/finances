@@ -20,7 +20,7 @@ brew tap-new roshanlam/homebrew-tap --no-git     # scaffolds Formula/ and a READ
 #   or create an empty public repo named homebrew-tap on GitHub and clone it
 cp packaging/homebrew/finances.rb "$(brew --repository)/Library/Taps/roshanlam/homebrew-tap/Formula/"
 cd "$(brew --repository)/Library/Taps/roshanlam/homebrew-tap"
-git init && git add . && git commit -m "finances 0.4.1"
+git init && git add . && git commit -m "finances 0.5.0"
 git remote add origin git@github.com:roshanlam/homebrew-tap.git
 git push -u origin main
 ```

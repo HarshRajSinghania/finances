@@ -21,10 +21,10 @@
 class Finances < Formula
   desc "Local-first personal finance from your own bank statements, checked against their totals"
   homepage "https://github.com/roshanlam/finances"
-  url "https://files.pythonhosted.org/packages/bf/0f/28b9a5081e54293cc4caf96fa707d37b81f798dffef275a18378006be3e9/finances-0.4.1-py3-none-any.whl",
+  url "https://files.pythonhosted.org/packages/0e/81/4d2e263bf8da924d6701581a25e6f7d502ac97a73aae656295de655877b5/finances-0.5.0-py3-none-any.whl",
       using: :nounzip
-  version "0.4.1"
-  sha256 "6fd6e6e6430888fe1ce76a6f25d21bc73b009ac13c6598550bde2a60ba0c61a7"
+  version "0.5.0"
+  sha256 "dc756648beea211cb8bfeb794a88129ad8cfc2649da4608659a438635918688f"
   license "MIT"
 
   livecheck do
