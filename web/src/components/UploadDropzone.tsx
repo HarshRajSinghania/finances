@@ -38,6 +38,15 @@ const ACCEPTED = /\.(pdf|csv|tsv|ofx|qfx|qbo|xml|sta|mt940|940|txt)$/i
 const ACCEPT_ATTR =
   ".pdf,application/pdf,.csv,text/csv,.tsv,.ofx,.qfx,.qbo,.xml,.sta,.mt940,.940,.txt"
 
+/** Budgeting-app exports the importer recognises, by the format it records. */
+const APP_LABEL: Record<string, string> = {
+  mint: "Mint",
+  ynab: "YNAB",
+  monarch: "Monarch",
+  tiller: "Tiller",
+  copilot: "Copilot",
+}
+
 interface QueueItem {
   name: string
   pct: number
@@ -82,7 +91,7 @@ export function UploadDropzone({
           ok: false,
           file: f.name,
           error:
-            "Upload a statement PDF or a bank export (CSV, OFX/QFX, CAMT.053, MT940).",
+            "Upload a statement PDF, a bank export (CSV, OFX/QFX, CAMT.053, MT940), or a Mint, YNAB, Monarch, Copilot or Tiller CSV.",
         })),
       )
       setQueue(pdfs.map((f) => ({ name: f.name, pct: 0, phase: "waiting" as Phase })))
@@ -189,12 +198,16 @@ export function UploadDropzone({
                 downloaded from your bank or card issuer, or pick them from disk. Each
                 one is read on arrival and checked against the totals or balances it
                 prints, so you can see straight away whether it can be trusted.
-                Nothing is sent anywhere; the parsing happens on this machine.
+                Coming from Mint, YNAB, Monarch, Copilot or Tiller? Drop its CSV
+                export here too, and Amazon's order history to see what each Amazon
+                charge was. Nothing is sent anywhere; the parsing happens on
+                this machine.
               </>
             ) : (
               <>
-                Drop them here, or choose files. Each is read on arrival and checked
-                against the totals or balances it prints.
+                Drop them here, or choose files: statement PDFs, bank exports, or a
+                Mint, YNAB, Monarch, Copilot or Tiller CSV. Each is read on arrival and
+                checked against the totals or balances it prints.
               </>
             )}
           </p>
@@ -255,7 +268,7 @@ export function UploadDropzone({
   )
 
   return (
-    <section aria-label="Add statements" className={cn("space-y-3", className)}>
+    <section aria-label="Add statements" className={cn("space-y-3", className)} data-write>
       {zone}
 
       {results.length > 0 && (
@@ -306,6 +319,25 @@ export function UploadDropzone({
 
 function ResultRow({ result }: { result: UploadResult }) {
   const s = result.statement
+  const li = result.lineItems
+
+  if (result.ok && li) {
+    return (
+      <div className="flex items-start gap-2">
+        <CircleCheck className="mt-0.5 size-4 shrink-0 text-[var(--color-good)]" aria-hidden />
+        <div className="min-w-0 space-y-0.5">
+          <p className="text-sm font-medium break-words">{result.file}</p>
+          <p className="text-xs text-[var(--color-ink-secondary)]">
+            {li.kind === "amazon" ? "Amazon order history" : "Receipts"}: {li.matched} of{" "}
+            {li.groups} {li.kind === "amazon" ? "shipments" : "receipts"} matched a charge to the
+            cent, {li.items} items in all. Open a charge on the transactions page to see them.
+            {li.matched < li.groups &&
+              " The rest have no matching charge yet, usually because that statement is not here."}
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   if (!result.ok) {
     return (
@@ -361,7 +393,10 @@ function ResultRow({ result }: { result: UploadResult }) {
       </div>
 
       <p className="text-xs leading-relaxed text-[var(--color-ink-secondary)]">
-        {s.issuer} ····{s.accountLast4} · {period} · {n} transaction
+        {s.issuer}
+        {s.accountLast4 ? ` ····${s.accountLast4}` : ""}
+        {(result.accounts ?? 1) > 1 ? ` and ${(result.accounts ?? 1) - 1} more account${(result.accounts ?? 1) > 2 ? "s" : ""}` : ""}{" "}
+        · {period} · {n} transaction
         {n === 1 ? "" : "s"}.{" "}
         {s.status === "ok" ? (
           <>
@@ -375,6 +410,12 @@ function ResultRow({ result }: { result: UploadResult }) {
             {money(Math.abs(s.reconcileDiff ?? 0), true)}. Treat figures from this file
             as unverified until it is resolved.
           </span>
+        ) : APP_LABEL[s.sourceFormat] ? (
+          <>
+            Imported from {APP_LABEL[s.sourceFormat]}. Its export carries no balances,
+            so these rows cannot be checked against a statement. Add the statements
+            themselves to verify them.
+          </>
         ) : (
           <>
             This statement prints no summary total, so there was nothing to check the

@@ -17,7 +17,7 @@
  * question, which passes it to the provider and keeps nothing.
  */
 
-import { ArrowUp, Check, ChevronDown, Cpu, KeyRound, RefreshCw, MessageSquareText, ShieldAlert, Trash2, Wrench, X } from "lucide-react"
+import { ArrowUp, Check, ChevronDown, Cpu, KeyRound, RefreshCw, MessageSquareText, ShieldAlert, ShieldCheck, ShieldQuestion, Trash2, Wrench, X } from "lucide-react"
 import * as React from "react"
 
 import { AnimatedTabs } from "@/components/easyui/AnimatedTabs"
@@ -27,7 +27,7 @@ import { Input } from "@/components/ui/misc"
 import { Spinner } from "@/components/ui/state"
 import { useApi } from "@/hooks/useApi"
 import { api } from "@/lib/api"
-import type { AskLocal, AskModel, AskStep, AskStatus, ChatMessage, Provider } from "@/lib/types"
+import type { AskCheck, AskCitation, AskLocal, AskModel, AskStep, AskStatus, ChatMessage, Provider } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const SUGGESTIONS = [
@@ -80,7 +80,8 @@ function loadSettings(): Settings {
   const remembered = { anthropic: store.get("key.anthropic"), openai: store.get("key.openai") }
   const remember = Boolean(remembered.anthropic || remembered.openai)
   return {
-    provider: (store.get("provider") as Provider) || "anthropic",
+    // A model on this machine first: nothing leaves it, and no key is needed.
+    provider: (store.get("provider") as Provider) || "local",
     model: {
       anthropic: store.get("model.anthropic"),
       openai: store.get("model.openai"),
@@ -99,6 +100,7 @@ function loadSettings(): Settings {
 
 interface Turn extends ChatMessage {
   steps?: AskStep[]
+  check?: AskCheck
   model?: string
   error?: boolean
 }
@@ -197,7 +199,7 @@ export function Ask() {
     try {
       const r = await api.ask(provider, model, settings.key[provider], history,
                               provider === "local" ? local?.endpoint || settings.endpoint : undefined)
-      setTurns((t) => [...t, { role: "assistant", content: r.answer, steps: r.steps, model: r.model }])
+      setTurns((t) => [...t, { role: "assistant", content: r.answer, steps: r.steps, model: r.model, check: r.check }])
     } catch (e) {
       setTurns((t) => [
         ...t,
@@ -214,7 +216,10 @@ export function Ask() {
         Ask anything about your spending in plain English. The assistant looks the
         numbers up in your store with read-only tools, the same ones{" "}
         <code className="font-mono text-xs">finances mcp</code> gives Claude Desktop,
-        so it can read your data but never change it.
+        so it can read your data but never change it. Every amount in an answer is
+        then checked against what those lookups returned: a charge links to the
+        statement page it is printed on, and an amount that is not in your data is
+        marked as such.
       </p>
 
       {statusError && (
@@ -736,7 +741,8 @@ function Bubble({ turn }: { turn: Turn }) {
   const tools = [...new Set((turn.steps ?? []).map((s) => s.tool))]
   return (
     <div className="max-w-[85%] space-y-2">
-      <Answer text={turn.content} />
+      <Answer text={turn.content} citations={turn.check?.citations} />
+      {turn.check && <Verdict verdict={turn.check.verdict} />}
       {tools.length > 0 && (
         <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-ink-muted)]">
           <Wrench className="size-3" aria-hidden />
@@ -761,7 +767,11 @@ function Bubble({ turn }: { turn: Turn }) {
  * **bold** and `code` — rendered as elements, never as HTML, so nothing a
  * model writes can run in this page.
  */
-function Answer({ text }: { text: string }) {
+function Answer({ text, citations }: { text: string; citations?: AskCitation[] }) {
+  // The checker found the amounts in the same order this walks the text, so
+  // each one takes the next citation whose text it matches.
+  const queue = [...(citations ?? [])]
+  const inline = (s: string) => renderInline(s, queue)
   const blocks: React.ReactNode[] = []
   let list: { ordered: boolean; items: string[] } | null = null
   const flush = () => {
@@ -797,12 +807,93 @@ function Answer({ text }: { text: string }) {
   return <div className="space-y-2 text-sm leading-relaxed">{blocks}</div>
 }
 
-function inline(s: string): React.ReactNode[] {
+function renderInline(s: string, queue: AskCitation[]): React.ReactNode[] {
   return s.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4)
-      return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
+      return <strong key={i} className="font-semibold">{cited(part.slice(2, -2), queue)}</strong>
     if (part.startsWith("`") && part.endsWith("`") && part.length > 2)
       return <code key={i} className="rounded bg-[var(--color-plane)] px-1 font-mono text-xs">{part.slice(1, -1)}</code>
-    return part
+    return <React.Fragment key={i}>{cited(part, queue)}</React.Fragment>
   })
+}
+
+// The same amounts finances/cite.py looks for.
+const MONEY = /([-−])?\s?([$€£])\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s?[kK]\b)?/g
+
+function cited(s: string, queue: AskCitation[]): React.ReactNode {
+  if (!queue.length) return s
+  const out: React.ReactNode[] = []
+  let last = 0
+  for (const m of s.matchAll(MONEY)) {
+    const at = queue.findIndex((c) => c.text === m[0].trim())
+    if (at < 0) continue
+    const [c] = queue.splice(at, 1)
+    const start = m.index! + (m[0].length - m[0].trimStart().length)
+    out.push(s.slice(last, start), <Cited key={start} c={c} text={m[0].trim()} />)
+    last = m.index! + m[0].length
+  }
+  out.push(s.slice(last))
+  return out
+}
+
+/** One amount, underlined by where it came from; a charge opens its statement page. */
+function Cited({ c, text }: { c: AskCitation; text: string }) {
+  const src = c.source
+  if (c.status === "missing" || !src) {
+    return (
+      <span
+        title="Not in your data: the model wrote this amount itself."
+        className="underline decoration-[var(--color-critical)] decoration-wavy underline-offset-4"
+      >
+        {text}
+      </span>
+    )
+  }
+  const lookup = TOOL_LABEL[src.tool] ?? src.tool
+  if (src.kind === "row" && src.file) {
+    const where = src.page ? `, page ${src.page}` : ""
+    return (
+      <a
+        href={api.originalUrl(src.file) + (src.page ? `#page=${src.page}` : "")}
+        target="_blank"
+        rel="noreferrer"
+        title={`${src.merchant ?? "Charge"} on ${src.date}: ${src.file}${where}`}
+        className="underline decoration-[var(--color-good)] decoration-dotted underline-offset-4 hover:decoration-solid"
+      >
+        {text}
+      </a>
+    )
+  }
+  const title =
+    src.kind === "derived" && src.of
+      ? `The ${src.op} of ${src.of[0].toFixed(2)} and ${src.of[1].toFixed(2)}, from ${lookup}`
+      : `From ${lookup}`
+  return (
+    <span
+      title={title}
+      className="underline decoration-[var(--color-good)] decoration-dotted underline-offset-4"
+    >
+      {text}
+    </span>
+  )
+}
+
+const VERDICT = {
+  verified: { icon: ShieldCheck, label: "Verified", tone: "text-[var(--color-good)]" },
+  found: { icon: ShieldQuestion, label: "In your data", tone: "text-[var(--color-ink-secondary)]" },
+  unverified: { icon: ShieldAlert, label: "Unverified", tone: "text-[var(--color-critical)]" },
+} as const
+
+function Verdict({ verdict }: { verdict: AskCheck["verdict"] }) {
+  if (verdict.level === "none") return null
+  const v = VERDICT[verdict.level]
+  return (
+    <p className={cn("flex items-start gap-1.5 text-xs", v.tone)}>
+      <v.icon className="mt-px size-3.5 shrink-0" aria-hidden />
+      <span>
+        <span className="font-medium">{v.label}.</span>{" "}
+        <span className="text-[var(--color-ink-secondary)]">{verdict.text}</span>
+      </span>
+    </p>
+  )
 }

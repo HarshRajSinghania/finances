@@ -1,22 +1,26 @@
 import {
   ArrowRight,
+  CalendarClock,
   CalendarOff,
   CircleAlert,
   CircleCheck,
   CircleHelp,
   CircleSlash,
   FileUp,
+  Loader2,
   Repeat,
   TrendingDown,
   TrendingUp,
 } from "lucide-react"
-import type * as React from "react"
+import * as React from "react"
 import { Link } from "react-router-dom"
 
 import { CategoryBars } from "@/components/charts/CategoryBars"
 import { MonthlyBars } from "@/components/charts/MonthlyBars"
+import { NetWorth } from "@/components/charts/NetWorth"
 import { StatCard, StatGrid } from "@/components/easyui/StatCard"
 import { Stat } from "@/components/Stat"
+import { ReadyReminder } from "@/components/StatementSources"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -24,6 +28,7 @@ import { Progress, Separator, Skeleton } from "@/components/ui/misc"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/ui/state"
 import { useApi } from "@/hooks/useApi"
 import { api } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import {
   cadenceLabel,
   dateLabel,
@@ -34,7 +39,7 @@ import {
   signedMoney,
   signedPercent,
 } from "@/lib/format"
-import type { Coverage, MonthRow, Recurring, Summary } from "@/lib/types"
+import type { Coverage, MonthRow, PaymentDue, Payments, Recurring, Summary } from "@/lib/types"
 
 /**
  * The landing screen.
@@ -57,6 +62,9 @@ export function Overview({
   const months = useApi(() => api.months(), [])
   const categories = useApi(() => api.categories(), [])
   const recurring = useApi(() => api.recurring(), [])
+  const payments = useApi(() => api.payments(), [])
+  const networth = useApi(() => api.networth(), [])
+  const sources = useApi(() => api.sources(), [])
 
   if (!summary) {
     // App owns the fatal case (the API is not running) and renders the error
@@ -90,7 +98,15 @@ export function Overview({
     <div className="space-y-6">
       <TrustPanel coverage={summary.coverage} />
 
+      {sources.data && <ReadyReminder data={sources.data} />}
+
+      {payments.data && (payments.data.payments.length > 0 || payments.data.unread > 0) && (
+        <CardPayments data={payments.data} onRead={payments.refetch} />
+      )}
+
       {months.data && <LatestMonth months={months.data.months} />}
+
+      {networth.data && networth.data.latest && <NetWorth data={networth.data} />}
 
       <section aria-labelledby="headline-stats" className="space-y-3">
         <h2 id="headline-stats" className="sr-only">
@@ -760,4 +776,144 @@ function monthName(ym: string) {
     month: "short",
     year: "numeric",
   })
+}
+
+/* ------------------------------------------------------- card payments */
+
+const PAYMENT_BADGE: Record<PaymentDue["state"], { label: (p: PaymentDue) => string; variant: "good" | "warning" | "critical" | "neutral" }> = {
+  paid: { label: () => "Paid in full", variant: "good" },
+  "nothing due": { label: () => "Nothing due", variant: "good" },
+  "minimum paid": { label: () => "Minimum paid", variant: "neutral" },
+  due: {
+    label: (p) => (p.daysLeft === 0 ? "Due today" : p.daysLeft === 1 ? "Due tomorrow" : `Due in ${p.daysLeft} days`),
+    variant: "warning",
+  },
+  unpaid: { label: () => "Not paid by the due date", variant: "critical" },
+  unknown: { label: () => "Due date passed", variant: "neutral" },
+}
+
+/**
+ * When each card's payment is due, read from its latest statement, and what
+ * the files show was paid towards it since. A payment made after the latest
+ * export is not visible yet, which the footnote says rather than crying wolf.
+ */
+function CardPayments({ data, onRead }: { data: Payments; onRead: () => void }) {
+  const { payments: rows, seenUntil, unread } = data
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CalendarClock className="size-4" strokeWidth={1.75} aria-hidden />
+          Card payments
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="divide-y divide-[var(--color-hairline)] p-0">
+        {unread > 0 && <ReadDueDates unread={unread} none={rows.length === 0} onRead={onRead} />}
+        {rows.map((p) => {
+          const badge = PAYMENT_BADGE[p.state]
+          return (
+            <div
+              key={`${p.issuer}-${p.last4}`}
+              className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3"
+            >
+              <div className="min-w-[10rem] flex-1">
+                <p className="text-sm font-medium">
+                  {p.issuer} <span className="tnum text-[var(--color-ink-muted)]">····{p.last4}</span>
+                </p>
+                <p className="text-xs text-[var(--color-ink-secondary)]">
+                  Due {dateLabel(p.due)} · statement closed {dateLabel(p.closed)}
+                </p>
+              </div>
+              <dl className="flex gap-6 text-sm">
+                <div>
+                  <dt className="text-xs text-[var(--color-ink-muted)]">Statement balance</dt>
+                  <dd className="tnum font-medium">{money(p.balance, true)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[var(--color-ink-muted)]">Minimum</dt>
+                  <dd className="tnum">{money(p.minimum, true)}</dd>
+                </div>
+                {p.paid > 0 && (
+                  <div>
+                    <dt className="text-xs text-[var(--color-ink-muted)]">Paid since</dt>
+                    <dd className="tnum">{money(p.paid, true)}</dd>
+                  </div>
+                )}
+              </dl>
+              <Badge variant={badge.variant}>{badge.label(p)}</Badge>
+            </div>
+          )
+        })}
+      </CardContent>
+      {seenUntil && (
+        <CardFooter>
+          <p className="text-xs text-[var(--color-ink-muted)]">
+            Payments as far as your files show, up to {dateLabel(seenUntil)}.
+          </p>
+        </CardFooter>
+      )}
+    </Card>
+  )
+}
+
+/**
+ * Statements added before due dates were read carry none. Reading them only
+ * fills in the due date; the transactions and their checks stay as they are.
+ */
+function ReadDueDates({
+  unread,
+  none,
+  onRead,
+}: {
+  unread: number
+  none: boolean
+  onRead: () => void
+}) {
+  const [busy, setBusy] = React.useState(false)
+  const [note, setNote] = React.useState<{ text: string; bad: boolean } | null>(null)
+
+  async function read() {
+    setBusy(true)
+    setNote(null)
+    try {
+      const r = await api.readDueDates()
+      const missing = r.checked - r.found - r.failed
+      setNote({
+        text:
+          `Found a due date on ${r.found} of ${r.checked} statement${r.checked === 1 ? "" : "s"}.` +
+          (missing > 0 ? ` ${missing} print none.` : "") +
+          (r.failed > 0 ? ` ${r.failed} could not be opened.` : ""),
+        bad: r.found === 0,
+      })
+      onRead()
+    } catch (e) {
+      setNote({ text: e instanceof Error ? e.message : String(e), bad: true })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3" data-write>
+      <p className="min-w-[14rem] flex-1 text-sm text-[var(--color-ink-secondary)]">
+        {none ? "See when each card is due. " : ""}
+        {unread} statement{unread === 1 ? " was" : "s were"} added before due dates were
+        read. Reading them only fills in the due date; nothing else changes.
+        {note && (
+          <span
+            className={cn(
+              "mt-1 block text-xs",
+              note.bad ? "text-[var(--color-critical)]" : "text-[var(--color-ink-muted)]",
+            )}
+          >
+            {note.text}
+          </span>
+        )}
+      </p>
+      <Button size="sm" variant="outline" onClick={read} disabled={busy}>
+        {busy ? <Loader2 className="animate-spin" aria-hidden /> : <CalendarClock aria-hidden />}
+        {busy ? "Reading" : "Read due dates"}
+      </Button>
+    </div>
+  )
 }

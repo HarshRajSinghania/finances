@@ -11,14 +11,18 @@ import {
   RefreshCw,
   Repeat,
   Search,
+  Sheet,
   Sun,
 } from "lucide-react"
 import { NavLink, Outlet, useLocation } from "react-router-dom"
 
+import { ClientSwitcher } from "@/components/ClientSwitcher"
+import { PhoneShare } from "@/components/PhoneShare"
 import { TrustPill } from "@/components/TrustPill"
 import { Button } from "@/components/ui/button"
 import { Skeleton, TooltipProvider } from "@/components/ui/misc"
 import { useTheme, type Theme } from "@/hooks/useApi"
+import { useReadOnly } from "@/hooks/useSession"
 import { dateLabel } from "@/lib/format"
 import type { Summary } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -45,6 +49,9 @@ export function Shell({
 }) {
   const { theme, setTheme } = useTheme()
   const { pathname } = useLocation()
+  const readOnly = useReadOnly()
+  // The phone view cannot ask: questions need a key or a model on the computer.
+  const nav = readOnly ? NAV.filter((n) => n.to !== "/ask") : NAV
   const current = NAV.find((n) => (n.end ? pathname === n.to : pathname.startsWith(n.to)))
 
   return (
@@ -58,9 +65,10 @@ export function Shell({
               from your statements
             </p>
           </div>
+          <ClientSwitcher />
 
           <nav className="flex-1 space-y-0.5 px-3">
-            {NAV.map(({ to, label, icon: Icon, end }) => (
+            {nav.map(({ to, label, icon: Icon, end }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -128,6 +136,25 @@ export function Shell({
                 ) : (
                   summary && <TrustPill coverage={summary.coverage} />
                 )}
+                {summary && summary.transactions > 0 && (
+                  <Button variant="ghost" size="sm" asChild>
+                    <a
+                      href="/api/export.xlsx"
+                      download
+                      aria-label="Download everything as an Excel workbook"
+                      title="Transactions, months, categories, subscriptions and statements, one sheet each"
+                    >
+                      <Sheet />
+                      <span className="hidden sm:inline">Excel</span>
+                    </a>
+                  </Button>
+                )}
+                {readOnly && (
+                  <span className="rounded-full border border-[var(--color-hairline)] px-2 py-0.5 text-xs text-[var(--color-ink-secondary)]">
+                    Read-only
+                  </span>
+                )}
+                <PhoneShare />
                 <Button
                   variant="ghost"
                   size="icon"
@@ -142,7 +169,7 @@ export function Shell({
 
             {/* The rail is desktop-only; below lg the nav moves in here. */}
             <nav className="scroll-x flex gap-1 border-t border-[var(--color-hairline)] px-3 py-1.5 lg:hidden">
-              {NAV.map(({ to, label, icon: Icon, end }) => (
+              {nav.map(({ to, label, icon: Icon, end }) => (
                 <NavLink
                   key={to}
                   to={to}

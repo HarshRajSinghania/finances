@@ -154,6 +154,16 @@ export function Transactions() {
 
   const categoryOptions = useCategoryOptions()
 
+  // Rows ticked for a bulk change, kept across pages and filters until applied.
+  const [selected, setSelected] = useState<Map<string, Transaction>>(new Map())
+  const toggle = (t: Transaction) =>
+    setSelected((prev) => {
+      const next = new Map(prev)
+      if (next.has(rowKey(t))) next.delete(rowKey(t))
+      else next.set(rowKey(t), t)
+      return next
+    })
+
   // A linked or reloaded URL can point past the end of a shorter result.
   useEffect(() => {
     if (!data || offset === 0) return
@@ -379,6 +389,18 @@ export function Transactions() {
           </div>
         ) : (
           <>
+            {selected.size > 0 && (
+              <BulkCategory
+                selected={[...selected.values()]}
+                options={[...categoryOptions.known].sort()}
+                onClear={() => setSelected(new Map())}
+                onDone={() => {
+                  setSelected(new Map())
+                  refetch()
+                }}
+              />
+            )}
+
             {/* Rows stay put and dim while a new page loads — a skeleton on
                 every keystroke reads as a crash, not as progress. */}
             <div
@@ -392,6 +414,24 @@ export function Transactions() {
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-8 pr-0" data-write>
+                        <input
+                          type="checkbox"
+                          aria-label="Select every row on this page"
+                          checked={rows.length > 0 && rows.every((t) => selected.has(rowKey(t)))}
+                          onChange={(e) =>
+                            setSelected((prev) => {
+                              const next = new Map(prev)
+                              for (const t of rows) {
+                                if (e.target.checked) next.set(rowKey(t), t)
+                                else next.delete(rowKey(t))
+                              }
+                              return next
+                            })
+                          }
+                          className="size-3.5 accent-[var(--color-ink)]"
+                        />
+                      </TableHead>
                       <SortHeader label="Date" col="date" sort={sort} order={order} onSort={onSort} />
                       <SortHeader
                         label="Merchant"
@@ -424,6 +464,8 @@ export function Transactions() {
                       <Row
                         key={`${offset + i}|${t.sourceFile}|${t.date}|${t.description}|${t.amount}`}
                         t={t}
+                        selected={selected.has(rowKey(t))}
+                        onSelect={() => toggle(t)}
                         onCategory={(c) => update({ category: c })}
                         onSource={(s) => update({ source: s })}
                       />
@@ -513,10 +555,14 @@ export function Transactions() {
 
 function Row({
   t,
+  selected,
+  onSelect,
   onCategory,
   onSource,
 }: {
   t: Transaction
+  selected: boolean
+  onSelect: () => void
   onCategory: (c: string) => void
   onSource: (s: string) => void
 }) {
@@ -525,7 +571,16 @@ function Row({
 
   return (
     <>
-      <TableRow className={cn(open && "bg-[var(--color-plane)]")}>
+      <TableRow className={cn((open || selected) && "bg-[var(--color-plane)]")}>
+        <TableCell className="w-8 pr-0" data-write>
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onSelect}
+            aria-label={`Select ${t.merchant} on ${dateLabel(t.date)}`}
+            className="size-3.5 accent-[var(--color-ink)]"
+          />
+        </TableCell>
         <TableCell className="tnum whitespace-nowrap text-[var(--color-ink-secondary)]">
           {dateLabel(t.date)}
         </TableCell>
@@ -549,6 +604,19 @@ function Row({
                 aria-hidden="true"
               />
               <span className="truncate">{t.merchant}</span>
+              {t.items && t.items.length > 0 && (
+                <span className="shrink-0 rounded border border-[var(--color-hairline)] px-1 text-[10px] text-[var(--color-ink-muted)]">
+                  {t.items.length} item{t.items.length === 1 ? "" : "s"}
+                </span>
+              )}
+              {t.sourceFile.startsWith("simplefin#") && (
+                <span
+                  title="From the live bank feed: confirmed when the statement arrives"
+                  className="shrink-0 rounded border border-dashed border-[var(--color-baseline)] px-1 text-[10px] text-[var(--color-ink-muted)]"
+                >
+                  live
+                </span>
+              )}
             </button>
           </Hint>
         </TableCell>
@@ -610,7 +678,7 @@ function Row({
 
       {open && (
         <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={6} className="bg-[var(--color-plane)] px-3 py-3">
+          <TableCell colSpan={7} className="bg-[var(--color-plane)] px-3 py-3">
             <dl className="grid gap-x-8 gap-y-2 text-xs sm:grid-cols-[auto_1fr]">
               <dt className="text-[var(--color-ink-muted)]">Statement descriptor</dt>
               <dd className="font-mono break-words text-[var(--color-ink)]">{t.description}</dd>
@@ -621,7 +689,40 @@ function Row({
               </dd>
 
               <dt className="text-[var(--color-ink-muted)]">Read from</dt>
-              <dd className="break-words">{t.sourceFile}</dd>
+              <dd className="break-words">
+                {t.sourceFile.startsWith("simplefin#") ? (
+                  "the live bank feed; replaced by the statement when it arrives"
+                ) : (
+                  <a
+                    href={api.originalUrl(t.sourceFile) + (t.page ? `#page=${t.page}` : "")}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline decoration-[var(--color-hairline)] underline-offset-2 hover:decoration-current"
+                  >
+                    {t.sourceFile}
+                    {t.page ? `, page ${t.page}` : ""}
+                  </a>
+                )}
+              </dd>
+
+              {t.items && t.items.length > 0 && (
+                <>
+                  <dt className="text-[var(--color-ink-muted)]">What was in it</dt>
+                  <dd>
+                    <ul className="space-y-0.5">
+                      {t.items.map((it, i) => (
+                        <li key={i} className="flex gap-3">
+                          <span className="min-w-0 flex-1">
+                            {it.quantity && it.quantity > 1 ? `${it.quantity} × ` : ""}
+                            {it.name}
+                          </span>
+                          <span className="tnum">{money(it.amount, true)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </dd>
+                </>
+              )}
             </dl>
           </TableCell>
         </TableRow>
@@ -757,6 +858,105 @@ function Select({
  * impossible from a spend-only list, so the money-in rows are read once to
  * complete the vocabulary rather than hard-coding the server's constant here.
  */
+function rowKey(t: Transaction): string {
+  return `${t.date}|${t.description}|${t.amount}|${t.accountLast4}|${t.seq}`
+}
+
+/**
+ * Move the ticked rows to one category. "Remember" teaches the categorizer the
+ * merchants, so their other rows move too and later imports land there.
+ */
+function BulkCategory({
+  selected,
+  options,
+  onClear,
+  onDone,
+}: {
+  selected: Transaction[]
+  options: string[]
+  onClear: () => void
+  onDone: () => void
+}) {
+  const [category, setCategory] = useState("")
+  const [remember, setRemember] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<{ text: string; bad?: boolean } | null>(null)
+  const merchants = new Set(selected.map((t) => t.merchant)).size
+
+  async function apply() {
+    setBusy(true)
+    setNote(null)
+    try {
+      const r = await api.setCategory(selected, category.trim(), remember)
+      setNote({
+        text:
+          `Moved ${r.updated} to ${category.trim()}` +
+          (r.alsoMoved ? `, and ${r.alsoMoved} more from the same merchants` : "") +
+          (r.remembered.length ? `. Remembered for ${r.remembered.length} merchant${r.remembered.length === 1 ? "" : "s"}.` : "."),
+      })
+      setCategory("")
+      onDone()
+    } catch (e) {
+      setNote({ text: e instanceof Error ? e.message : String(e), bad: true })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-[var(--color-hairline)] bg-[var(--color-plane)] px-4 py-2.5 text-sm" data-write>
+      <span className="font-medium">{selected.length} selected</span>
+      <form
+        className="flex flex-wrap items-center gap-x-3 gap-y-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (category.trim()) void apply()
+        }}
+      >
+        <Input
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          list="bulk-categories"
+          placeholder="Move to category…"
+          aria-label="Category to move them to"
+          className="h-8 w-48"
+        />
+        <datalist id="bulk-categories">
+          {options.map((c) => (
+            <option key={c} value={c} />
+          ))}
+        </datalist>
+        <label className="flex items-center gap-1.5 text-xs text-[var(--color-ink-secondary)]">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            className="size-3.5 accent-[var(--color-ink)]"
+          />
+          Remember for {merchants === 1 ? "this merchant" : `these ${merchants} merchants`}
+        </label>
+        <Button type="submit" size="sm" disabled={busy || !category.trim()}>
+          {busy && <Spinner />}
+          Move
+        </Button>
+      </form>
+      <Button variant="ghost" size="sm" onClick={onClear} disabled={busy}>
+        Clear
+      </Button>
+      {note && (
+        <span
+          className={cn(
+            "basis-full text-xs",
+            note.bad ? "text-[var(--color-critical)]" : "text-[var(--color-ink-secondary)]",
+          )}
+        >
+          {note.text}
+        </span>
+      )}
+    </div>
+  )
+}
+
 function useCategoryOptions() {
   const { data: cats } = useApi(() => api.categories(), [])
   const { data: inbound } = useApi(

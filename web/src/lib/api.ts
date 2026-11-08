@@ -18,12 +18,19 @@ import type {
   Goals,
   Merchant,
   MonthRow,
+  DueDatesRead,
+  Feed,
+  NetWorth,
+  Sources,
+  WatchStatus,
+  Payments,
   Provider,
   Recurring,
   Statement,
   SubscriptionMark,
   SubscriptionReview,
   Summary,
+  Transaction,
   TransactionPage,
   TransactionQuery,
   UploadResponse,
@@ -118,6 +125,36 @@ export const api = {
 
   anomalies: () => get<Anomalies>("/anomalies"),
 
+  /** Each card's latest due date, and what has been paid towards it. */
+  payments: () => get<Payments>("/payments"),
+  networth: () => get<NetWorth>("/networth"),
+  sources: () => get<Sources>("/sources"),
+  feed: () => get<Feed>("/feed"),
+  feedAction: (action: "connect" | "sync" | "disconnect", token?: string) =>
+    send<Feed>("POST", "/feed", { action, token }),
+  /** Watch a folder for new statements; null stops. */
+  watch: (folder: string | null) =>
+    send<WatchStatus & { added: WatchStatus["log"] }>("POST", "/watch", { folder }),
+  /** Move rows to a category; `remember` teaches the categorizer their merchants. */
+  setCategory: (rows: Transaction[], category: string, remember: boolean) =>
+    send<{ ok: boolean; updated: number; alsoMoved: number; remembered: string[] }>(
+      "POST",
+      "/transactions/category",
+      {
+        rows: rows.map(({ date, description, amount, accountLast4, seq }) => ({
+          date,
+          description,
+          amount,
+          accountLast4,
+          seq,
+        })),
+        category,
+        remember,
+      },
+    ),
+  /** Read due dates off card statements imported before due dates were read. */
+  readDueDates: () => send<DueDatesRead>("POST", "/payments/due-dates", {}),
+
   wrapped: (year?: number) => get<Wrapped>("/wrapped", { year }),
 
   budgets: () => get<BudgetStatus>("/budgets"),
@@ -197,6 +234,9 @@ export const api = {
       xhr.send(body)
     })
   },
+
+  /** Where the PDF or export a statement was read from opens in the browser. */
+  originalUrl: (sourceFile: string) => `${BASE}/originals/${encodeURIComponent(sourceFile)}`,
 
   async deleteStatement(sourceFile: string): Promise<void> {
     const res = await fetch(`${BASE}/statements/${encodeURIComponent(sourceFile)}`, {

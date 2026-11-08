@@ -88,7 +88,15 @@ export interface Statement {
   reconcileDiff: number | null
   reconcileNote: string
   status: ReconcileStatus
+  /** pdf, csv, ofx, … or an app export: mint, ynab, monarch, tiller, copilot. */
+  sourceFormat: string
+  /** "card", "bank", "investment", or "" when the statement does not say. */
+  accountType: string
+  /** When the card's payment is due (ISO), null when the statement does not say. */
+  paymentDue: string | null
   transactionCount: number
+  /** Whether the file it was read from is still in the statement folder. */
+  hasFile?: boolean
 }
 
 export interface Transaction {
@@ -105,6 +113,10 @@ export interface Transaction {
   accountLast4: string
   sourceFile: string
   seq: number
+  /** The statement page it was read from; 0 when not recorded. */
+  page?: number
+  /** What was bought, from an order history or receipt matched to this charge. */
+  items?: { name: string; quantity: number | null; amount: number | null }[]
 }
 
 export interface CategoryRow {
@@ -206,6 +218,10 @@ export interface UploadResult {
   statement?: Statement | null
   coverage?: Coverage
   transactionCount?: number
+  /** An order history or receipts file: items attached to charges. */
+  lineItems?: { file: string; kind: string; groups: number; matched: number; items: number }
+  /** Accounts the file held; an app export or OFX can carry several. */
+  accounts?: number
 }
 
 export interface UploadResponse {
@@ -353,8 +369,37 @@ export interface AskStep {
   ok: boolean
 }
 
+/** Where one amount in an answer came from, or that it came from nowhere. */
+export interface AskCitation {
+  text: string
+  value: number
+  status: "found" | "missing"
+  source?: {
+    kind: "row" | "lookup" | "derived"
+    tool: string
+    step: number
+    file?: string
+    page?: number
+    date?: string
+    merchant?: string
+    op?: "sum" | "difference"
+    of?: [number, number]
+  }
+}
+
+export interface AskCheck {
+  citations: AskCitation[]
+  verdict: {
+    level: "verified" | "found" | "unverified" | "none"
+    text: string
+    amounts: number
+    missing: number
+  }
+}
+
 export interface AskReply {
   answer: string
+  check?: AskCheck
   steps: AskStep[]
   provider: Provider
   model: string
@@ -363,7 +408,7 @@ export interface AskReply {
 
 /** Saved turns. Assistant turns carry the lookups behind them. */
 export interface AskHistory {
-  turns: (ChatMessage & { at?: string; steps?: AskStep[]; model?: string })[]
+  turns: (ChatMessage & { at?: string; steps?: AskStep[]; model?: string; check?: AskCheck })[]
 }
 
 /** A model server on this machine or network, and the chat models it serves. */
@@ -372,4 +417,115 @@ export interface AskLocal {
   endpoint: string
   server: string
   models: AskModel[]
+}
+
+/* ------------------------------------------------------------ payments */
+
+export type PaymentState = "due" | "paid" | "minimum paid" | "unpaid" | "unknown" | "nothing due"
+
+export interface PaymentDue {
+  issuer: string
+  last4: string
+  due: string
+  daysLeft: number
+  balance: number | null
+  minimum: number | null
+  paid: number
+  state: PaymentState
+  statement: string
+  closed: string
+}
+
+export interface Payments {
+  payments: PaymentDue[]
+  seenUntil: string
+  /** Card statements on disk whose due date has not been read yet. */
+  unread: number
+}
+
+export interface DueDatesRead extends Payments {
+  checked: number
+  found: number
+  failed: number
+}
+
+/* ------------------------------------------------------------ net worth */
+
+export interface NetWorth {
+  months: {
+    month: string
+    assets: number
+    debts: number
+    net: number
+    /** Accounts carried from a statement more than 45 days old. */
+    stale: string[]
+    /** Some account had no statement yet by this month. */
+    partial: boolean
+  }[]
+  accounts: {
+    issuer: string
+    last4: string
+    kind: "bank" | "card" | "investment"
+    balance: number
+    asOf: string
+    first: string
+  }[]
+  latest: NetWorth["months"][number] | null
+}
+
+/* ------------------------------------------------------------ sources */
+
+export interface BankGuide {
+  bank: string
+  url: string
+  help: string | null
+  history: string | null
+  steps: string[]
+  exports: string[]
+  bulk: string | null
+  closes: string | null
+}
+
+export interface SourceAccount {
+  issuer: string
+  last4: string
+  lastClosed: string
+  /** When the next statement should be downloadable. */
+  expected: string
+  ready: boolean
+  /** Statements likely out since the last one in the store. */
+  missing: number
+  guide: BankGuide | null
+}
+
+export interface WatchStatus {
+  folder: string
+  on: boolean
+  since: number | null
+  suggested: string
+  log: { file: string; ok: boolean; at: number; transactions?: number | null; error?: string | null }[]
+  error: string
+}
+
+export interface Sources {
+  accounts: SourceAccount[]
+  watch: WatchStatus
+}
+
+export interface Feed {
+  connected: boolean
+  synced: number | null
+  errors: string[]
+  accounts: { issuer: string; last4: string; balance: number | null; kind: string; asOf: string }[]
+  /** How the feed agreed with each statement that later covered its days. */
+  checks: {
+    statement: string
+    issuer: string
+    last4: string
+    periodEnd: string
+    feedRows: number
+    matched: number
+    statementRows: number
+    reconciled: 0 | 1 | null
+  }[]
 }

@@ -151,3 +151,8 @@
     overscroll-behavior-x: contain;
   }
 }
+
+/* The phone view is read-only: controls that change anything are not offered. */
+.read-only [data-write] {
+  display: none !important;
+}

@@ -5,10 +5,12 @@ import {
   CircleAlert,
   CircleCheck,
   CircleHelp,
+  FileText,
   Trash2,
 } from "lucide-react"
 import * as React from "react"
 
+import { StatementSources } from "@/components/StatementSources"
 import { UploadDropzone } from "@/components/UploadDropzone"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -71,13 +73,16 @@ export function Statements({
   onChanged: () => void
 }) {
   const { data, error, loading, refetch } = useApi(() => api.statements(), [])
+  const sources = useApi(() => api.sources(), [])
 
   // Uploads and deletes change the reconciliation verdict in the header, so the
   // app-level summary is reloaded alongside this page's own data.
+  const refetchSources = sources.refetch
   const changed = React.useCallback(() => {
     refetch()
+    refetchSources()
     onChanged()
-  }, [refetch, onChanged])
+  }, [refetch, refetchSources, onChanged])
 
   const groups = React.useMemo<Group[]>(() => {
     if (!data) return []
@@ -154,6 +159,8 @@ export function Statements({
       />
 
       <UploadDropzone onUploaded={changed} />
+
+      {sources.data && <StatementSources data={sources.data} onChange={changed} />}
 
       <div className="space-y-4">
         {groups.map((g) => (
@@ -464,7 +471,19 @@ function StatementRow({
         <TableCell className="whitespace-nowrap">{periodLabel(s)}</TableCell>
 
         <TableCell className="max-w-[18rem] truncate text-[var(--color-ink-secondary)]">
-          <span title={s.sourceFile}>{s.sourceFile}</span>
+          {s.hasFile ? (
+            <a
+              href={api.originalUrl(s.sourceFile)}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open ${s.sourceFile}`}
+              className="underline decoration-[var(--color-hairline)] underline-offset-2 hover:text-[var(--color-ink)] hover:decoration-current"
+            >
+              {s.sourceFile}
+            </a>
+          ) : (
+            <span title={s.sourceFile}>{s.sourceFile}</span>
+          )}
         </TableCell>
 
         <TableCell className="tnum text-right">{s.transactionCount}</TableCell>
@@ -475,8 +494,27 @@ function StatementRow({
           <StatusCell statement={s} />
         </TableCell>
 
-        <TableCell className="pl-0">
+        <TableCell className="pl-0 whitespace-nowrap">
+          {s.hasFile && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]"
+              asChild
+            >
+              <a
+                href={api.originalUrl(s.sourceFile)}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`View ${s.sourceFile}`}
+                title="View the statement"
+              >
+                <FileText />
+              </a>
+            </Button>
+          )}
           <Button
+            data-write
             variant="ghost"
             size="icon"
             className="size-7 text-[var(--color-ink-muted)] hover:text-[var(--color-critical)]"
@@ -527,15 +565,26 @@ function StatementRow({
                   </div>
                 </div>
               ) : (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-[var(--color-critical)]"
-                  onClick={onAskDelete}
-                >
-                  <Trash2 />
-                  Remove statement
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  {s.hasFile && (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={api.originalUrl(s.sourceFile)} target="_blank" rel="noreferrer">
+                        <FileText />
+                        View statement
+                      </a>
+                    </Button>
+                  )}
+                  <Button
+                    data-write
+                    variant="ghost"
+                    size="sm"
+                    className="text-[var(--color-critical)]"
+                    onClick={onAskDelete}
+                  >
+                    <Trash2 />
+                    Remove statement
+                  </Button>
+                </div>
               )}
             </div>
           </TableCell>
@@ -546,6 +595,13 @@ function StatementRow({
 }
 
 function StatusCell({ statement: s }: { statement: Statement }) {
+  if (s.accountType === "investment") {
+    return (
+      <Badge variant="neutral" title={s.reconcileNote}>
+        Value {money(s.newBalance)}
+      </Badge>
+    )
+  }
   if (s.status === "ok") {
     return (
       <Badge variant="good">
@@ -608,6 +664,7 @@ function Detail({ statement: s }: { statement: Statement }) {
         />
         <Field label="Interest charged" value={money(s.interestCharged, true)} numeric />
         <Field label="Fees charged" value={money(s.feesCharged, true)} numeric />
+        {s.paymentDue && <Field label="Payment due" value={dateLabel(s.paymentDue)} />}
         <Field label="Transactions read" value={String(s.transactionCount)} numeric />
       </dl>
 
