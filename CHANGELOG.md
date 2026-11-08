@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.5.0] - 2026-11-08
+
+### Added
+- Ask answers are checked: every amount in an answer is looked for in what the
+  model's lookups returned. A charge links to the statement page it is printed
+  on, totals and differences say where they came from, and an amount that is
+  not in the data is marked. Each answer carries a Verified / Unverified badge.
+  A local model is now the default provider.
+- Each transaction keeps the page and line it was read from.
+- Net worth over time, from the balance each statement closed on, with
+  brokerage statements read for their account value (not their trades).
+- Bulk recategorization on the transactions page, optionally remembered for
+  those merchants.
+- Keeping up to date without a bank login: a watched Downloads folder
+  (`finances watch`, or a switch on the Statements page), when each account's
+  next statement should be out with a link to the bank's statements page and
+  steps for 24 banks, and an Overview reminder when one is waiting.
+- Optional SimpleFIN live feed (`finances feed`): this month's charges before
+  the statement, replaced and confirmed by the statement when it arrives.
+- Scanned PDFs are read through OCR (`ocrmypdf`) and held to the same
+  reconciliation; unconfirmed rows say they came from a scan.
+- `finances accuracy`: per bank, how many statements reconciled on the first try.
+- Amazon order history and receipt CSVs: the items behind each charge.
+- A read-only phone view over the home network, behind a QR-code link.
+- For bookkeepers: `finances client` (a store per client, folder intake,
+  workpapers with SHA-256 and sign-off columns) and `finances web --clients`.
+- `FINANCES_ALLOWED_HOSTS` for reaching the dashboard by another name on your
+  own network (a home server's `umbrel.local`).
+- Packaging drafts: a Homebrew formula, a Docker image workflow for ghcr.io,
+  Umbrel and CasaOS app manifests, and an MCP registry `server.json`.
+- View the original statement from the dashboard: each statement's file name,
+  a view icon on its row, and a "View statement" button in its details open the
+  PDF or export it was read from, in a new tab. Only files the store has a
+  statement for are served; exports are shown as plain text.
+- Import from Mint, YNAB, Monarch, Copilot and Tiller: their CSV exports are
+  recognised by their columns, split into one account per account named, signed
+  by each app's convention, and keep the app's own labels for pay, transfers,
+  refunds and card payments. Imported as unverified, since they carry no balances.
+  They can be dropped on the dashboard's upload box like any bank export.
+- `finances export xlsx`: an Excel workbook (transactions, months, categories,
+  subscriptions, statements with their check results), written with the
+  standard library. The dashboard downloads it from the Excel button in the header.
+- Card payment due dates: read from each card statement ("Payment Due Date"),
+  and a Card payments panel on the overview with the statement balance, the
+  minimum, what has been paid since the statement closed, and whether it is due,
+  paid or missed. Statements added before this get theirs from a "Read due dates"
+  button on that panel, which fills in only the due date. Statement details show
+  it too.
+
+### Changed
+- First run: `finances` on its own starts with how to begin. Commands that only
+  read no longer leave an empty `finances.db` behind when there is none; they
+  say how to get started instead. A mistyped command suggests the right one.
+
 ## [0.4.1] - 2026-11-07
 
 ### Added

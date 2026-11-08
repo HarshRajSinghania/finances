@@ -7,6 +7,8 @@ cleanedData
 PDFs
 # docker compose keeps the store and reports here
 /data/
+# a bookkeeper's client folders (finances client): other people's statements
+/clients/
 # launch-video working files; the finished video lives in docs/
 /brag-output/
 /brag-output-*/

@@ -1,5 +1,7 @@
 # finances
 
+<!-- mcp-name: io.github.roshanlam/finances -->
+
 [![PyPI](https://img.shields.io/pypi/v/finances)](https://pypi.org/project/finances/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://github.com/roshanlam/finances/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/roshanlam/finances/blob/main/LICENSE)
@@ -170,6 +172,47 @@ file checks out.
 - **Cancel these** — recurring charges ranked by what dropping them saves, with
   the reason each one is there (a price that went up, three services doing one
   job). Mark one cancelled and any charge after that date is flagged.
+- **Net worth** — what you own minus what you owe, month by month, from the
+  balance each statement closed on. Brokerage statements (Fidelity, Vanguard,
+  Schwab and others) count by their account value, not their trades.
+- **Card payments** — each card's due date, balance and minimum, and whether
+  what you have paid since covers it.
+- **Recategorize in bulk** — tick rows on the transactions page and move them to
+  a category; "remember" teaches the categorizer those merchants for good.
+- **The original, one click away** — every statement, every transaction and
+  every amount in an Ask answer opens the PDF it came from, at its page.
+- **Excel** — the header's Excel button downloads everything as a workbook.
+
+## Keeping it up to date without a bank login
+
+- **Downloads, watched.** Turn it on from the Statements page (or run
+  `finances watch`) and any statement or bank export you download is added on
+  arrival. Only files that arrive afterwards count, and anything that is not a
+  statement (a receipt, a ticket, a random CSV) is left alone.
+- **When the next one is out.** Each account shows when its next statement
+  should be ready, with a link to that bank's statements page and the steps to
+  get there; the Overview says when one is waiting. The bank guide covers 24
+  banks, checked against their own help pages.
+- **A live feed, if you want one.** [SimpleFIN Bridge](https://beta-bridge.simplefin.org/)
+  links your banks for $1.50 a month (paid to them) and gives you a token to
+  paste on the Statements page, or into `finances feed connect TOKEN`. This
+  month's charges show up before the statement exists, marked "live". When the
+  statement arrives, its rows (checked against its printed totals) replace the
+  feed's, and the page says how many of the feed's rows the statement confirmed.
+  No bank password ever reaches this app.
+- **Scanned statements.** A PDF with no text layer is read with OCR (install
+  `ocrmypdf`) and then checked like any other: rows that do not add up to the
+  printed totals are kept, but marked as read from a scan and needing a look.
+- **What was in the box.** Drop Amazon's order history (Account > Request your
+  data > Your Orders) and each Amazon charge shows the items in it, matched to
+  the cent. Any shop works with a `date,store,item,amount` CSV.
+- **On your phone.** The phone button in the header opens a read-only view on
+  your home Wi-Fi: scan the code, and a partner can look too. Nothing changes
+  from the phone, and turning it off ends access.
+
+How often does the parser get your bank right? `finances accuracy` counts, per
+bank, how many statements reconciled on the first try. It contains only bank
+names and counts, so it is safe to share.
 
 The server makes no outbound requests, binds to localhost, and refuses any
 request that does not come from a page on localhost — so another website open
@@ -238,7 +281,12 @@ command are also environment variables:
 | `ask "..."` | plain-English questions, answered offline | — |
 | `anonymize` | a copy safe to share | `transactions_shareable.csv` |
 | `enrich` | local-LLM merchant cleanup | `finances.db` |
-| `web` | serve the browser dashboard, with PDF drag-and-drop | — |
+| `web` | serve the browser dashboard, with PDF drag-and-drop (`--clients DIR` for a practice) | — |
+| `watch` | add new statements from Downloads as they arrive | `finances.db` |
+| `feed connect TOKEN` | optional live feed through SimpleFIN Bridge, checked by statements | `finances.db` |
+| `items orders.csv` | the items behind Amazon (or any shop's) charges | `finances.db` |
+| `accuracy` | how often each bank's statements reconcile on the first try | — |
+| `client intake NAME DIR` | for bookkeepers: read a client's folder; `client workpapers NAME` | the client's folder |
 | `demo` | a year of made-up statements, to try everything on | `demo.db` |
 | `pipeline PDFs/` | parse + categorize + analyze in one run | all of the above |
 
@@ -281,12 +329,35 @@ finances export beancount -o money.beancount --balances
 finances export hledger   -o money.journal   --balances   # ledger-cli reads it too
 finances export ynab      -o exports/        # one CSV per account
 finances export actual    -o exports/
+finances export xlsx      -o finances.xlsx   # Excel, Numbers, LibreOffice, Google Sheets
 ```
+
+The Excel workbook has five sheets: every transaction (money out and money in
+in separate columns), month by month, categories, subscriptions, and each
+statement with whether it matched its printed totals. The dashboard's
+spreadsheet button downloads the same file.
 
 With `--balances`, every reconciled statement's closing balance becomes a
 balance assertion, so `bean-check` or `hledger check` re-verifies the whole
 history independently of this tool. Card payments from checking go through an
 `Assets:Transfers` account, so they net to zero instead of counting twice.
+
+## Coming from Mint, YNAB, Monarch, Copilot or Tiller
+
+Bring your history with you. Export your transactions from the app you are
+leaving and import the file as it is:
+
+```bash
+finances import ~/Downloads/transactions.csv
+```
+
+The app is recognised from the file's columns, every account in it becomes its
+own account here, and each app's sign convention is handled (Mint's debit/credit
+column, YNAB's outflow and inflow, Copilot's spending-is-positive). Where the app
+labelled something as pay, a transfer, a refund or a card payment, that label is
+kept, so it never counts as spending. These exports carry no balances, so those
+rows are marked as unverified; once your own bank statements cover the same
+months, those are what get checked.
 
 ## More than one currency
 
@@ -369,6 +440,24 @@ The research behind the design (record-linkage theory, subset-sum limits,
 W3C PROV, in-toto, SARIF, audit evidence standards) and the roadmap are in
 [docs/verification-engine.md](https://github.com/roshanlam/finances/blob/main/docs/verification-engine.md).
 
+## For bookkeepers: a store per client
+
+```bash
+finances client intake "Acme Bakery" ~/Downloads/acme-2026   # every statement in the folder
+finances client workpapers "Acme Bakery"                       # the reconciliation, to file
+finances web --clients clients                                 # switch clients in the dashboard
+```
+
+Each client is its own folder, with its own store, statements and taught
+categories, under `clients/`. Intake reads every statement and export in a
+folder and says, per file, whether it reconciles. The workpapers are a
+workbook a reviewer can sign off: each statement's opening and closing
+balance, the total it prints against the total read from it, the difference,
+the verdict, the file's SHA-256, and empty "Reviewed by" and "Date" columns;
+then the exceptions (statements that do not add up, months with no
+statement) and every transaction with the page it came from. Client data never
+leaves the machine.
+
 ## Ask questions in the dashboard, with your own key
 
 The dashboard's **Ask** page answers questions about your money with your own
@@ -378,6 +467,16 @@ answer you can see which lookups the model made.
 
 The model gets the same read-only tools as `finances mcp` below, so every number
 it gives you comes from your reconciled store, and it cannot change anything.
+
+**Every amount is checked.** After the model answers, each amount it wrote is
+looked for in what its lookups returned. A charge links to the statement page
+it is printed on; a total says which lookup it came from; a difference names the
+two figures it is the difference of; and an amount that is not in your data is
+underlined as such. Each answer gets a badge: *Verified* when every amount was
+found and every statement behind it reconciles, *Unverified* when any amount
+came from the model rather than your data. This needs nothing from the model,
+so it works the same for a small local model. A model on your own machine is
+the default.
 The key stays in your browser: it is forgotten when you close the tab, unless
 you tick "Remember keys on this device". Each question carries the key to the
 local server, which passes it on to the provider and never writes it down. To
@@ -607,7 +706,7 @@ rm -rf dist finances/web_dist
 uv build && uv publish
 ```
 
-344 tests, no test dependencies. The parser's golden-file tests skip when
+427 tests, no test dependencies. The parser's golden-file tests skip when
 `PDFs/` is empty, so a fresh clone runs the rest. The golden-file harness
 records per-statement extraction totals so a parser change that moves a number
 is visible:

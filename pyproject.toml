@@ -1,14 +1,16 @@
 [project]
 name = "finances"
-version = "0.4.1"
-description = "See where your money goes from your own bank statements and exports, checked against their printed totals. No bank login; nothing leaves your machine."
+version = "0.5.0"
+description = "Personal finance and reconciliation from your own files: bank statement exports, Stripe payouts and ledgers. Every number is checked against its source, with evidence you can re-run. Ask questions with Claude, OpenAI or a local model. No bank login, no Plaid, runs on your machine."
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 readme = "README.md"
 authors = [{ name = "roshanlam" }]
-keywords = ["personal-finance", "bank-statements", "pdf", "reconciliation",
-            "budgeting", "local-first", "privacy", "ofx", "beancount", "ledger"]
+keywords = ["personal-finance", "bank-statements", "budgeting", "budgeting-and-forecasting",
+            "budgeting-tool", "local-first", "local-llm", "pdf-parser", "privacy",
+            "privacy-first", "privacy-tools", "reconciliation", "self-hosted",
+            "ofx", "beancount", "ledger", "mcp"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -31,6 +33,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/roshanlam/finances"
+Repository = "https://github.com/roshanlam/finances"
+Documentation = "https://github.com/roshanlam/finances#readme"
 Issues = "https://github.com/roshanlam/finances/issues"
 Changelog = "https://github.com/roshanlam/finances/blob/main/CHANGELOG.md"
 
@@ -47,7 +51,7 @@ packages = ["finances", "finances.verify"]
 # The built dashboard rides along in the wheel, so `uvx finances web` works
 # without Node. The release workflow copies web/dist here before building.
 [tool.setuptools.package-data]
-finances = ["web_dist/**/*"]
+finances = ["web_dist/**/*", "banks.json"]
 
 [tool.uv]
 package = true
