@@ -911,6 +911,184 @@ def _txn(acct: Account, d: date, desc: str, amount: float, *, post: date | None 
                        source_file=acct.name, currency=(currency or "").upper())
 
 
+# --------------------------------------------------------------------------
+# Exports from other budgeting apps
+# --------------------------------------------------------------------------
+#
+# People leaving Mint, YNAB, Monarch, Copilot or Tiller take their history with
+# them as one CSV covering every account. Each app has its own columns and its
+# own sign convention, so each is recognised by its header and read as such.
+# The column names are what these apps' exports have used; a file that differs
+# is reported, not guessed at. There are no balances in any of them, so nothing
+# here can be checked against a statement: the rows are imported as unverified.
+
+APPS = {
+    # name: (columns that identify it, how amounts are signed)
+    "mint": ({"date", "original description", "amount", "transaction type", "account name"},
+             "type"),          # amount always positive; Transaction Type debit/credit
+    "ynab": ({"account", "date", "payee", "outflow", "inflow"}, "split"),
+    "monarch": ({"date", "merchant", "account", "original statement", "amount"},
+                "in-positive"),
+    "tiller": ({"date", "description", "amount", "account", "institution", "full description"},
+               "in-positive"),
+    "copilot": ({"date", "name", "amount", "account", "parent category", "excluded"},
+                "out-positive"),
+}
+APP_LABELS = {"mint": "Mint", "ynab": "YNAB", "monarch": "Monarch", "tiller": "Tiller",
+              "copilot": "Copilot"}
+
+
+# The other app's category, when it says something ours can use. Matched as
+# words in its category name, first hit wins; anything else keeps our own guess.
+APP_CATEGORIES = [
+    (r"paycheck|salary|wages|income|ready to assign|inflow|deposit|interest income|dividend", "Income"),
+    (r"credit card payment|card payment|loan payment", "Payment"),
+    (r"transfer", "Transfers/Cash"),
+    (r"refund|reimburse", "Credits/Refunds"),
+    (r"grocer|supermarket", "Groceries"),
+    (r"coffee", "Coffee"),
+    (r"restaurant|dining|fast food|food & drink|takeout|eating out", "Dining"),
+    (r"delivery", "Delivery"),
+    (r"alcohol|bar", "Alcohol/Bars"),
+    (r"gas|fuel|auto|parking|car ", "Gas/Auto"),
+    (r"public transit|transport|rideshare|taxi|uber|lyft", "Transport"),
+    (r"rent|mortgage|housing", "Rent/Housing"),
+    (r"utilit|electric|water|power", "Utilities"),
+    (r"phone|internet|mobile|cable", "Phone/Internet"),
+    (r"insurance", "Insurance"),
+    (r"pharmacy", "Pharmacy"),
+    (r"health|medical|doctor|dentist", "Health"),
+    (r"gym|fitness", "Fitness"),
+    (r"stream|subscription|music|movies", "Subscriptions"),
+    (r"software", "Software/Tools"),
+    (r"entertainment|games|gaming", "Entertainment"),
+    (r"travel|flight|airline", "Travel"),
+    (r"hotel|lodging", "Lodging"),
+    (r"cloth|apparel", "Clothing"),
+    (r"electronics", "Electronics"),
+    (r"shopping|amazon", "Shopping"),
+    (r"personal care|hair|beauty", "Personal Care"),
+    (r"education|tuition", "Education"),
+    (r"childcare|daycare", "Childcare"),
+    (r"pet", "Pets"),
+    (r"charity|donation", "Charity"),
+    (r"gift", "Gifts"),
+    (r"fee|interest charge|finance charge", "Fees/Interest"),
+    (r"tax", "Taxes"),
+    (r"home|furnish|household", "Home"),
+]
+
+
+def app_category(name: str, house: float) -> str | None:
+    """Our category for another app's, or None when it does not map cleanly."""
+    low = (name or "").lower()
+    if not low:
+        return None
+    for pattern, ours in APP_CATEGORIES:
+        if re.search(rf"\b(?:{pattern})", low):
+            # Money coming in is never spending, whatever the label says.
+            if house < 0 and ours not in ("Income", "Transfers/Cash", "Credits/Refunds",
+                                         "Payment"):
+                return None
+            return ours
+    return None
+
+
+def detect_app(header: list[str]) -> str | None:
+    names = {_norm_header(h)[0] for h in header}
+    for app, (needs, _) in APPS.items():
+        if needs <= names:
+            return app
+    return None
+
+
+def read_app_export(path: str, *, app: str | None = None, **_) -> list[Account]:
+    """One budgeting app's export, split into an Account per account it names."""
+    text = read_text(path)
+    table = list(csv.reader(io.StringIO(text), delimiter=sniff_delimiter(text)))
+    if not table:
+        raise ValueError("empty file")
+    header = table[0]
+    app = app or detect_app(header)
+    if app not in APPS:
+        raise ValueError("not an export from Mint, YNAB, Monarch, Copilot or Tiller")
+    # "Account #" (Tiller's masked number) would otherwise collide with "Account".
+    idx = {_norm_header(h)[0] + (" no" if "#" in h else ""): i for i, h in enumerate(header)}
+    _, convention = APPS[app]
+
+    def col(name, r):
+        i = idx.get(name)
+        return r[i].strip() if i is not None and i < len(r) else ""
+
+    rows = [(n, r) for n, r in enumerate(table[1:], start=2) if any(c.strip() for c in r)]
+    comma = decimal_comma([col(k, r) for _, r in rows
+                           for k in ("amount", "outflow", "inflow")])
+    dfmt = date_format([col("date", r) for _, r in rows], prefer_dmy=comma)
+    if not dfmt:
+        raise ValueError(f"could not tell the date format of this {APP_LABELS[app]} export")
+
+    accounts: dict[str, Account] = {}
+    base = os.path.basename(path)
+    for n, r in rows:
+        d = to_date(col("date", r), dfmt)
+        if d is None:
+            continue
+        if convention == "split":
+            out = parse_amount(col("outflow", r), comma) or 0.0
+            inn = parse_amount(col("inflow", r), comma) or 0.0
+            house = abs(out) - abs(inn)
+        else:
+            v = parse_amount(col("amount", r), comma)
+            if v is None:
+                continue
+            if convention == "type":
+                house = abs(v) if col("transaction type", r).lower() == "debit" else -abs(v)
+            elif convention == "in-positive":
+                house = -v
+            else:                                   # out-positive (Copilot)
+                house = -abs(v) if col("type", r).lower() == "income" else v
+        if house == 0:
+            continue
+        name = col("account name", r) or col("account", r) or APP_LABELS[app]
+        # The last four digits, where the app exports them, let these rows line up
+        # with (and be de-duplicated against) the bank's own files.
+        masked = col("account mask", r) or col("account no", r)
+        named = re.search(r"\.{2,}\s*(\d{4})\)?\s*$", name)       # Monarch: "Amex (...1005)"
+        last4 = _last4(masked) if re.search(r"\d", masked) else (named.group(1) if named else "")
+        key = f"{name}|{last4}"
+        acct = accounts.get(key)
+        if acct is None:
+            kind = "card" if re.search(r"card|credit|visa|master|amex|discover", name, re.I) else "bank"
+            issuer = col("institution", r) or APP_LABELS[app]
+            acct = accounts[key] = Account(
+                fmt=app, name=f"{base}#{name}", account=last4, issuer=issuer, kind=kind,
+                note=f"imported from {APP_LABELS[app]}; the export carries no balances, "
+                     f"so these rows cannot be checked against a statement")
+        payee = col("original description", r) or col("original statement", r) \
+            or col("full description", r)
+        desc = payee or col("description", r) or col("merchant", r) or col("payee", r) \
+            or col("name", r) or "(no description)"
+        t = acct.add(_txn(acct, d, re.sub(r"\s+", " ", desc), round(house, 2)),
+                     record=n, raw={"amount": col("amount", r) or
+                                    f"{col('outflow', r)}/{col('inflow', r)}"},
+                     app_category=col("category", r))
+        # Our categories drive budgets and the subscription features, so ours
+        # stand; theirs win only where ours had nothing, or where theirs says
+        # the money is not spending at all (pay, transfers, refunds, card payments).
+        theirs = app_category(col("category", r), house)
+        if theirs and (t.category == "Uncategorized" or theirs in
+                       ("Income", "Transfers/Cash", "Credits/Refunds", "Payment")):
+            t.category = theirs
+    for acct in accounts.values():
+        acct.rows.sort(key=lambda t: t.date)
+        if acct.rows:
+            acct.start = _ts_date(acct.rows[0].date)
+            acct.end = _ts_date(acct.rows[-1].date)
+    if not accounts:
+        raise ValueError(f"no rows with a date and an amount in this {APP_LABELS[app]} export")
+    return sorted(accounts.values(), key=lambda a: a.name)
+
+
 def detect_format(path: str) -> str | None:
     ext = os.path.splitext(path)[1].lower()
     with open(path, "rb") as fh:
@@ -922,7 +1100,8 @@ def detect_format(path: str) -> str | None:
     if re.search(r"^:20:", head, re.M) and re.search(r"^:(25|60F):", head, re.M):
         return "mt940"
     if ext in (".csv", ".tsv", ".txt"):
-        return "csv"
+        first = next(csv.reader(io.StringIO(head.split("\n", 1)[0])), [])
+        return detect_app(first) or "csv"
     if ext == ".xml":
         full = read_text(path)
         if "BkToCstmrStmt" in full:
@@ -930,7 +1109,8 @@ def detect_format(path: str) -> str | None:
     return None
 
 
-READERS = {"csv": read_csv, "ofx": read_ofx, "camt053": read_camt, "mt940": read_mt940}
+READERS = {"csv": read_csv, "ofx": read_ofx, "camt053": read_camt, "mt940": read_mt940,
+           **{app: read_app_export for app in APPS}}
 
 
 def read_file(path: str, fmt: str | None = None, **opts) -> list[Account]:
@@ -1098,6 +1278,12 @@ def main() -> int:
     with FinanceDB(args.db) as db:
         for path in files:
             name = os.path.basename(path)
+            from finances import lineitems
+            if lineitems.kind_of_file(path):
+                r = lineitems.import_file(args.db, path)
+                print(f"  {name}\n    items: {r['matched']} of {r['groups']} matched a "
+                      f"charge, {r['items']} items\n")
+                continue
             try:
                 results = import_file(db, path, force=args.force, fmt=args.format,
                                       **opts)
@@ -1112,7 +1298,8 @@ def main() -> int:
                 touched.add(acct.account)
                 total += len(acct.rows)
                 print(f"  {acct.name}")
-                print(f"    {acct.fmt.upper()} | {acct.issuer} ····{acct.account or '????'}"
+                print(f"    {acct.fmt.upper()} | {acct.issuer} "
+                      f"{'····' + acct.account if acct.account else acct.name.rsplit('#', 1)[-1]}"
                       f" | {acct.kind} | {st.statement_period or 'no dates'}"
                       + (f" | {acct.currency}" if acct.currency else ""))
                 print(f"    {len(acct.rows)} transactions"

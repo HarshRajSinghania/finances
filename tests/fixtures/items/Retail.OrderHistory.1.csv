@@ -1,0 +1,5 @@
+"Website","Order ID","Order Date","Currency","Unit Price","Total Owed","Quantity","Order Status","Ship Date","Product Name"
+"Amazon.com","111-0000001-0000001","2026-10-02T15:04:05Z","USD","12.99","14.06","1","Closed","2026-10-03T08:00:00Z","Phone case, clear"
+"Amazon.com","111-0000001-0000001","2026-10-02T15:04:05Z","USD","29.99","32.47","1","Closed","2026-10-03T08:00:00Z","Printer ink, black XL"
+"Amazon.com","111-0000002-0000002","2026-10-10T11:00:00Z","USD","18.00","19.49","1","Closed","2026-10-11T09:00:00Z","A paperback novel"
+"Amazon.com","111-0000003-0000003","2026-10-12T11:00:00Z","USD","99.00","107.17","1","Cancelled","","Something cancelled"

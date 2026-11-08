@@ -11,6 +11,7 @@ other things, so this hands the rows over instead of competing with them.
     finances export ynab      -o exports/           # one CSV per account
     finances export actual    -o exports/           # one CSV per account
     finances export csv       -o everything.csv
+    finances export xlsx      -o finances.xlsx      # Excel, LibreOffice, Numbers, Sheets
 
 ``--balances`` adds balance assertions to the beancount and ledger output: for
 every statement that reconciled, the balance it printed is asserted on the day
@@ -39,7 +40,7 @@ from finances.database import DEFAULT_DB, FinanceDB
 from finances.fx import base_currency
 from finances.models import Statement, Transaction
 
-FORMATS = ("beancount", "hledger", "ledger", "ynab", "actual", "csv")
+FORMATS = ("beancount", "hledger", "ledger", "ynab", "actual", "csv", "xlsx")
 
 # Issuers that only ever issue cards, for statements that did not say.
 CARD_ISSUERS = {"Amex", "Discover", "Capital One", "Apple Card", "Synchrony",
@@ -254,7 +255,62 @@ def write_per_account(fmt: str, txns, out_dir: str) -> list[str]:
 
 DEFAULT_OUT = {"beancount": "finances.beancount", "hledger": "finances.journal",
                "ledger": "finances.ledger", "ynab": "exports", "actual": "exports",
-               "csv": "transactions.csv"}
+               "csv": "transactions.csv", "xlsx": "finances.xlsx"}
+
+
+def workbook(txns: list[Transaction], statements: list[Statement], db_path: str,
+             path: str) -> str:
+    """Everything worth keeping in a spreadsheet, one sheet per table.
+
+    Transactions keep money out and money in as separate columns, the way bank
+    statements print them, so a spreadsheet sum never has to know a sign
+    convention. Every statement's reconciliation verdict comes along, so the
+    spreadsheet says how far its numbers can be trusted.
+    """
+    from finances.engine import NON_SPEND, Engine
+    from finances.xlsx import Sheet, write
+
+    tx_rows = [[t.date, t.description, t.merchant, t.category,
+                t.amount if t.amount > 0 else None, -t.amount if t.amount < 0 else None,
+                f"{t.issuer} {t.account_last4}".strip(), t.currency, t.source_file]
+               for t in txns]
+    with Engine.from_source(db_path) as store:
+        eng = store.with_transactions(txns)
+        spend, income = eng.by_month(), eng.income_by_month()
+        complete = set(eng.complete_months())
+        months = sorted(set(spend) | set(income))
+        month_rows = [[m, round(spend.get(m, 0.0), 2), round(income.get(m, 0.0), 2),
+                       round(income.get(m, 0.0) - spend.get(m, 0.0), 2),
+                       "yes" if m in complete else "partial or missing"] for m in months]
+        cats = eng.by_category()
+        total = sum(v for c, v in cats.items() if c not in NON_SPEND) or 1.0
+        n_months = max(len(complete), 1)
+        cat_rows = [[c, round(v, 2), v / total, round(v / n_months, 2)]
+                    for c, v in sorted(cats.items(), key=lambda kv: -kv[1]) if c not in NON_SPEND]
+        subs = [[r.name, r.category, r.cadence, round(r.amount, 2), round(r.per_year, 2),
+                 r.first_seen, r.last_seen, r.next_expected,
+                 round(r.price_pct / 100, 3) if r.price_change else None]
+                for r in sorted(eng.recurring(), key=lambda r: -r.per_year)]
+    verdict = {1: "matches the statement's totals", 0: "does NOT match", None: "nothing to check"}
+    st_rows = [[s.source_file, f"{s.issuer} {s.account_last4}".strip(), s.period_start,
+                s.period_end, s.previous_balance, s.new_balance,
+                verdict.get(s.reconciled, "nothing to check"), s.reconcile_note]
+               for s in sorted(statements, key=lambda s: (s.period_end, s.source_file))]
+    return write(path, [
+        Sheet("Transactions", ["Date", "Description", "Merchant", "Category", "Money out",
+                               "Money in", "Account", "Currency", "Source file"], tx_rows,
+              ["date", "text", "text", "text", "money", "money"]),
+        Sheet("Months", ["Month", "Spent", "Came in", "Kept", "Fully covered"], month_rows,
+              ["text", "money", "money", "money"]),
+        Sheet("Categories", ["Category", "Spent", "Share of spending", "Per month"], cat_rows,
+              ["text", "money", "pct", "money"]),
+        Sheet("Subscriptions", ["Name", "Category", "Cadence", "Amount", "Per year",
+                                "First seen", "Last seen", "Next expected", "Price change"],
+              subs, ["text", "text", "text", "money", "money", "date", "date", "date", "pct"]),
+        Sheet("Statements", ["File", "Account", "From", "To", "Opening balance",
+                             "Closing balance", "Check", "Note"], st_rows,
+              ["text", "text", "date", "date", "money", "money"]),
+    ])
 
 
 def select(txns: list[Transaction], start: str | None, end: str | None,
@@ -298,6 +354,10 @@ def main() -> int:
         print(f"{len(txns)} transactions. Import each file into the matching account.")
         return 0
 
+    if args.format == "xlsx":
+        workbook(txns, statements, args.db, out)
+        print(f"Wrote {len(txns)} transactions and 4 summary sheets -> {out}")
+        return 0
     if args.format == "csv":
         with open(out, "w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=Transaction.columns())

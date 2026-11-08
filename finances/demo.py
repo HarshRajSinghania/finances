@@ -167,6 +167,7 @@ def build(today: date, seed: int = 7) -> tuple[list[Transaction], list[Statement
     txns: list[Transaction] = []
     stmts: list[Statement] = []
     card_balance, bank_balance = 1240.18, 3800.00
+    invested = 24_500.00
 
     for i, m in enumerate(month_starts(MONTHS, today)):
         end = last_day(m)
@@ -205,6 +206,7 @@ def build(today: date, seed: int = 7) -> tuple[list[Transaction], list[Statement
                 st.utilization_pct = round(100 * card_balance / CREDIT_LIMIT, 1)
                 st.purchase_apr = 24.99
                 st.minimum_payment = round(max(35.0, card_balance * 0.01), 2)
+                st.payment_due = (end + timedelta(days=25)).isoformat()
                 st.interest_charged = 0.0
                 st.fees_charged = 0.0
             else:
@@ -215,6 +217,17 @@ def build(today: date, seed: int = 7) -> tuple[list[Transaction], list[Statement
             reconcile(st, ts)
             txns += ts
             stmts.append(st)
+
+        # A brokerage account: read for its value, which drifts with the market
+        # and a monthly contribution, never for its trades.
+        start = invested
+        invested = round(invested * (1 + rng.uniform(-0.03, 0.04)) + 250, 2)
+        stmts.append(Statement(
+            source_file=f"{PREFIX}fidelity-{tag}.pdf", issuer="Fidelity", account_last4="7781",
+            statement_period=period, period_start=m.isoformat(), period_end=end.isoformat(),
+            previous_balance=start, new_balance=invested, account_type="investment",
+            reconcile_note="Investment account: its value is read, not its trades, "
+                           "so there is nothing to reconcile."))
 
     # The same categorizer a parsed statement goes through, without anything
     # you have taught it: the demo should look the same on every machine.
@@ -253,11 +266,12 @@ def main() -> int:
         db.upsert_transactions(txns)
         db.upsert_statements(stmts)
 
-    ok = sum(1 for s in stmts if s.reconciled == 1)
+    checked = [s for s in stmts if s.checkable]
+    ok = sum(1 for s in checked if s.reconciled == 1)
     uncategorized = sum(1 for t in txns if t.category == "Uncategorized")
     print(f"Wrote {len(txns):,} made-up transactions across {len(stmts)} statements "
           f"to {args.db}")
-    print(f"  reconciled     {ok}/{len(stmts)}")
+    print(f"  reconciled     {ok}/{len(checked)}")
     print(f"  uncategorized  {uncategorized}")
     print("\nTry it:")
     flag = "" if args.db == os.environ.get("FINANCES_DB") else f" --db {args.db}"
@@ -265,7 +279,7 @@ def main() -> int:
     print(f"  finances check{flag}")
     print(f"  finances cashflow{flag}")
     print(f"  finances ask --example top-merchants{flag}")
-    return 0 if ok == len(stmts) else 1
+    return 0 if ok == len(checked) else 1
 
 
 if __name__ == "__main__":

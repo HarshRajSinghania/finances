@@ -30,6 +30,8 @@ DEFAULT_DB = os.environ.get("FINANCES_DB") or "finances.db"
 
 # Transaction columns that together identify a unique charge (a statement
 # parsed twice produces the same key and is folded, not duplicated).
+# Rows from a live bank feed are stored under this source, one per account.
+FEED_PREFIX = "simplefin#"
 _TXN_KEY = ("date", "description", "amount", "account_last4", "seq")
 
 
@@ -190,11 +192,31 @@ class FinanceDB:
                      [s.to_row() for s in stmts])
 
     # -- reads -----------------------------------------------------------
-    def transactions(self) -> list[Transaction]:
+    def transactions(self, feed: bool = False) -> list[Transaction]:
+        """Every row, except live-feed rows a statement has since covered.
+
+        A bank feed (SimpleFIN) brings this month's charges before the
+        statement exists. Once the statement for those dates arrives, its rows
+        are the record, checked against its printed totals, and the feed's
+        copies of the same charges step aside. ``feed=True`` returns them all.
+        """
         rows = self.conn.execute(
             "SELECT * FROM transactions ORDER BY date, source_file"
         ).fetchall()
-        return [Transaction.from_row(dict(r)) for r in rows]
+        txns = [Transaction.from_row(dict(r)) for r in rows]
+        if feed or not any(t.source_file.startswith(FEED_PREFIX) for t in txns):
+            return txns
+        covered: dict[str, list[tuple[str, str]]] = {}
+        for r in self.conn.execute(
+                "SELECT account_last4, period_start, period_end FROM statements "
+                "WHERE source_file NOT LIKE ? AND period_start != '' AND period_end != ''",
+                (FEED_PREFIX + "%",)):
+            if r["account_last4"]:
+                covered.setdefault(r["account_last4"], []).append(
+                    (r["period_start"], r["period_end"]))
+        return [t for t in txns if not (
+            t.source_file.startswith(FEED_PREFIX)
+            and any(a <= t.date <= b for a, b in covered.get(t.account_last4, ())))]
 
     def statements(self) -> list[dict]:
         rows = self.conn.execute(

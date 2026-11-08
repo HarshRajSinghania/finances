@@ -36,6 +36,11 @@ class Transaction:
     # ISO 4217 code the amount is in. "" means the store's base currency, which
     # is every row a US statement PDF produces; bank exports name theirs.
     currency: str = ""
+    # Where the row was read: the page of source_file (1-based, 0 when the
+    # source has no pages or was read before this was recorded) and the line as
+    # printed. An answer that quotes this amount can point straight at it.
+    page: int = 0
+    line: str = ""
 
     def __post_init__(self):
         if not self.direction:
@@ -71,6 +76,8 @@ class Transaction:
             source_file=row.get("source_file") or "",
             seq=int(row.get("seq") or 0),
             currency=(row.get("currency") or "").upper(),
+            page=int(row.get("page") or 0),
+            line=row.get("line") or "",
         )
 
     def to_row(self) -> dict:
@@ -141,6 +148,9 @@ class Statement:
     reconcile_diff: float | None = None  # extracted charges - printed purchases
     reconcile_note: str = ""             # why it could not be checked, or what broke
 
+    # When the card's payment is due (ISO), "" when the statement does not say.
+    payment_due: str = ""
+
     # -- provenance -------------------------------------------------------
     currency: str = ""                   # ISO 4217, "" for the base currency
     account_type: str = ""               # "card" | "bank" | "" when unknown
@@ -174,6 +184,15 @@ class Statement:
             out[f.name] = v
         out.setdefault("source_file", row.get("source_file", ""))
         return cls(**out)
+
+    @property
+    def checkable(self) -> bool:
+        """Whether there are extracted rows to hold against printed totals.
+
+        An investment statement is read for its value alone, and a live bank
+        feed is not a statement at all: neither counts for or against coverage.
+        """
+        return self.account_type != "investment" and self.source_format != "simplefin"
 
     @property
     def trusted(self) -> bool:

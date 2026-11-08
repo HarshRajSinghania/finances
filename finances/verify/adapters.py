@@ -527,7 +527,7 @@ def choose(path: str, role: str | None) -> tuple[str, str, str]:
     if path.lower().endswith(".pdf"):
         return "pdf", "pdf", role or "bank"
     fmt = importer.detect_format(path)
-    if fmt in ("ofx", "camt053", "mt940"):
+    if fmt in ("ofx", "camt053", "mt940", *importer.APPS):
         return "export", fmt, role or "bank"
     if sniff_stripe(path):
         return "stripe", "stripe", role or "processor"

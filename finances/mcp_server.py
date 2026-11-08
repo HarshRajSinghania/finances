@@ -97,7 +97,7 @@ def _txn(t) -> dict:
     return {"date": t.date, "merchant": t.merchant, "description": t.description,
             "amount": round(t.amount, 2), "category": t.category,
             "account": f"{t.issuer} {t.account_last4}".strip(),
-            "source_file": t.source_file}
+            "source_file": t.source_file, **({"page": t.page} if t.page else {})}
 
 
 def _recurring(r) -> dict:

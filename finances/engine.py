@@ -328,7 +328,8 @@ class Engine:
         downstream may be wrong, and every tool should say so instead of
         printing a confident number.
         """
-        stmts = self.statements()
+        # Investment values and live feeds have no extracted rows to check.
+        stmts = [s for s in self.statements() if s.checkable]
         ok = [s for s in stmts if s.reconciled == 1]
         bad = [s for s in stmts if s.reconciled == 0]
         unknown = [s for s in stmts if s.reconciled is None]

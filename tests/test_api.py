@@ -11,14 +11,18 @@ browser considers it same-origin — caught by the Host header.
 from __future__ import annotations
 
 import http.client
+import os
 import threading
 import unittest
+import urllib.parse
 from http.server import ThreadingHTTPServer
+from unittest import mock
 
 import support
 
 from finances import api
 from finances.database import FinanceDB
+from finances.models import Statement
 
 
 class GuardTest(support.TempDirMixin, unittest.TestCase):
@@ -68,6 +72,57 @@ class GuardTest(support.TempDirMixin, unittest.TestCase):
     def test_no_cors_header_is_sent(self):
         res = self.request(headers={"Host": "localhost:8787"})
         self.assertIsNone(res.getheader("Access-Control-Allow-Origin"))
+
+
+class OriginalTest(GuardTest):
+    """The file a statement was read from opens in the browser, and nothing else does."""
+
+    def setUp(self):
+        super().setUp()
+        self.pdfs = self.tmp_path("PDFs")
+        os.makedirs(self.pdfs)
+        for name, body in (("card.pdf", b"%PDF-1.4 card"), ("bank.ofx", b"<OFX><b>x</b>"),
+                           ("other.pdf", b"%PDF-1.4 not a statement")):
+            with open(os.path.join(self.pdfs, name), "wb") as fh:
+                fh.write(body)
+        with FinanceDB(api.Handler.api.db_path) as db:
+            db.upsert_statements([Statement(source_file="card.pdf"),
+                                  Statement(source_file="bank.ofx#1234"),
+                                  Statement(source_file="gone.pdf")])
+        patch = mock.patch.object(api, "PDF_DIR", self.pdfs)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def get(self, path):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", path, headers={"Host": "localhost"})
+        res = conn.getresponse()
+        body = res.read()
+        conn.close()
+        return res, body
+
+    def test_a_pdf_is_served_as_itself(self):
+        res, body = self.get("/api/originals/card.pdf")
+        self.assertEqual((res.status, res.getheader("Content-Type"), body),
+                         (200, "application/pdf", b"%PDF-1.4 card"))
+        self.assertTrue(res.getheader("Content-Disposition").startswith("inline"))
+
+    def test_an_export_is_plain_text_in_a_sandbox(self):
+        res, body = self.get("/api/originals/" + urllib.parse.quote("bank.ofx#1234"))
+        self.assertEqual(res.status, 200)
+        self.assertTrue(res.getheader("Content-Type").startswith("text/plain"))
+        self.assertEqual(res.getheader("Content-Security-Policy"), "sandbox")
+        self.assertEqual(body, b"<OFX><b>x</b>")
+
+    def test_only_statement_files_are_served(self):
+        for path in ("other.pdf", "gone.pdf", "..%2Ft.db", "%2E%2E%2F%2E%2E%2Fetc%2Fpasswd"):
+            with self.subTest(path=path):
+                self.assertEqual(self.get("/api/originals/" + path)[0].status, 404)
+
+    def test_the_list_says_which_can_be_opened(self):
+        rows = {r["sourceFile"]: r["hasFile"]
+                for r in api.Handler.api.statements({})["statements"]}
+        self.assertEqual(rows, {"card.pdf": True, "bank.ofx#1234": True, "gone.pdf": False})
 
 
 if __name__ == "__main__":

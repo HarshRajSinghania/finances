@@ -29,8 +29,10 @@ class DemoTest(support.TempDirMixin, unittest.TestCase):
 
     def test_every_statement_reconciles(self):
         _, stmts = demo.build(self.TODAY)
-        self.assertEqual(len(stmts), 2 * demo.MONTHS)
-        bad = [(s.source_file, s.reconcile_note) for s in stmts if s.reconciled != 1]
+        self.assertEqual(len(stmts), 3 * demo.MONTHS)
+        # The brokerage account is read for its value, not reconciled.
+        bad = [(s.source_file, s.reconcile_note) for s in stmts
+               if s.reconciled != 1 and s.account_type != "investment"]
         self.assertEqual(bad, [])
 
     def test_every_transaction_is_categorized(self):

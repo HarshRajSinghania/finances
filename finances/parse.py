@@ -762,6 +762,57 @@ def balance_polarity(rows, centers, balance_col):
 # Core parse
 # --------------------------------------------------------------------------
 
+def ocr_copy(path, out_dir, password=None):
+    """A copy of a scanned PDF with a text layer added by OCR, or None.
+
+    ocrmypdf (Tesseract underneath) runs on this machine, like everything
+    else; nothing is uploaded. Without it installed there is nothing to do.
+    """
+    import shutil
+    import subprocess
+    exe = shutil.which("ocrmypdf")
+    if not exe:
+        return None
+    out = os.path.join(out_dir, os.path.basename(path))
+    cmd = [exe, "--quiet", "--skip-text", "--output-type", "pdf", path, out]
+    if password:
+        return None                     # ocrmypdf cannot open encrypted files
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    return out if proc.returncode == 0 and os.path.exists(out) else None
+
+
+def _parse_scan(path, password, amount_col, dump_columns, want_text):
+    """A statement with no text layer: OCR it, then parse it like any other.
+
+    OCR misreads digits, so its rows are held to the same test as a text PDF's:
+    they must add up to the totals the statement prints. When they do not, they
+    are kept but the statement says plainly that they were read from a scan and
+    need checking, rather than passing them off as read.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="finances-ocr-") as tmp:
+        copy = ocr_copy(path, tmp, password)
+        if copy is None:
+            raise RuntimeError(
+                "no text layer: this is a scan. Install OCR to read it "
+                "(macOS: brew install ocrmypdf; Linux: apt install ocrmypdf), "
+                "or download the statement again as a text PDF")
+        txns, meta = parse_statement(copy, None, amount_col, dump_columns, want_text)
+    name = os.path.basename(path)
+    for t in txns:
+        t.source_file = name
+    st = meta["statement"]
+    st.source_file, st.source_format = name, "pdf+ocr"
+    if st.reconciled == 1:
+        st.reconcile_note = ("Read from a scan by OCR; the rows add up to the printed "
+                             "totals. " + (st.reconcile_note or "")).strip()
+    elif st.checkable:
+        st.reconcile_note = ("Read from a scan by OCR and not confirmed by the printed "
+                             "totals: check these rows against the statement. "
+                             + (st.reconcile_note or "")).strip()
+    return txns, meta
+
+
 def parse_statement(path, password=None, amount_col="auto",
                     dump_columns=False, want_text=False):
     """Extract transactions + a statement summary from one PDF.
@@ -781,8 +832,7 @@ def parse_statement(path, password=None, amount_col="auto",
 
     full = "\n".join(words_text(ws) for _, ws in all_lines)
     if not full.strip():
-        raise RuntimeError("no text layer (scanned image PDF) -> needs OCR, "
-                           "or re-download the statement as a text PDF")
+        return _parse_scan(path, password, amount_col, dump_columns, want_text)
 
     fallback_year = year_from_filename(path) or datetime.fromtimestamp(
         os.path.getmtime(path)).year
@@ -965,6 +1015,8 @@ def parse_statement(path, password=None, amount_col="auto",
             account_last4=last4,
             statement_period=period,
             source_file=os.path.basename(path),
+            page=c["page"] + 1,
+            line=c["text"][:200],
         ))
         # Where on the page this row was read, for finances.verify's evidence.
         refs.append({"page": c["page"] + 1, "line": c["text"],
@@ -1054,7 +1106,21 @@ def parse_statement(path, password=None, amount_col="auto",
                           account_type="card" if (fields.get("credit_limit")
                                                   or fields.get("purchase_apr")) else "",
                           **fields)
-    reconcile(statement, txns, extra_note=balance_note)
+    statement.payment_due = payment_due(full, closing)
+    value = None if fields.get("minimum_payment") else investment_value(full)
+    if value is not None:
+        # A brokerage statement's activity is trades and dividends, not
+        # spending: what it is read for is what the account is worth.
+        txns, refs = [], []
+        statement.account_type = "investment"
+        statement.issuer = investment_issuer(full) or (issuer if issuer != "Unknown"
+                                                       else "Investment")
+        statement.previous_balance, statement.new_balance = value
+        statement.charges_extracted = statement.credits_extracted = None
+        statement.reconcile_note = ("Investment account: its value is read, not its "
+                                    "trades, so there is nothing to reconcile.")
+    else:
+        reconcile(statement, txns, extra_note=balance_note)
 
     meta = {"statement": statement, "fields": fields,
             "pages": pages, "issuer": issuer, "last4": last4, "period": period,
@@ -1070,6 +1136,82 @@ def parse_statement(path, password=None, amount_col="auto",
 # --------------------------------------------------------------------------
 # Reconciliation — the only ground truth a statement offers is its own totals
 # --------------------------------------------------------------------------
+
+_DUE = re.compile(r"payment\s+due\s+date\s*:?\s*(\d{1,2}/\d{1,2}(?:/\d{2,4})?"
+                  r"|[A-Z][a-z]{2,8}\.?\s+\d{1,2}(?:,?\s+\d{4})?)", re.I)
+
+
+_VALUE = r"\$?\s*(-?[\d,]+\.\d{2})"
+_ENDING_VALUE = re.compile(
+    r"(?:(?:total|ending|closing|net)\s+(?:account|portfolio)\s+value"
+    r"|your\s+(?:account|portfolio)\s+value|(?:ending|closing)\s+market\s+value)"
+    r"\s*(?:as\s+of\s+[\w/ ,]+?)?:?\s*" + _VALUE, re.I)
+_STARTING_VALUE = re.compile(
+    r"(?:beginning|opening|starting)\s+(?:account\s+|portfolio\s+|market\s+)?value"
+    r"\s*:?\s*" + _VALUE, re.I)
+_BROKERAGE = re.compile(r"\b(brokerage|investment|portfolio|securities|holdings|"
+                        r"ira|401\(?k\)?|roth)\b", re.I)
+INVESTMENT_ISSUERS = [("Fidelity", r"fidelity"), ("Vanguard", r"vanguard"),
+                      ("Schwab", r"schwab"), ("E*TRADE", r"e\s?\*\s?trade"),
+                      ("Robinhood", r"robinhood"), ("Merrill", r"merrill"),
+                      ("Interactive Brokers", r"interactive brokers"),
+                      ("Wealthfront", r"wealthfront"), ("Betterment", r"betterment")]
+
+
+def investment_value(text: str):
+    """(starting, ending) value of a brokerage statement, or None if it is not one.
+
+    Only a statement that names an account or portfolio *value* counts: a
+    checking statement prints an ending balance, never an account value, so
+    this cannot claim a bank account.
+    """
+    m = _ENDING_VALUE.search(text or "")
+    if not m or not _BROKERAGE.search(text):
+        return None
+    start = _STARTING_VALUE.search(text)
+    num = lambda g: float(g.replace(",", ""))           # noqa: E731
+    return (num(start.group(1)) if start else None), num(m.group(1))
+
+
+def investment_issuer(text: str) -> str:
+    low = (text or "").lower()
+    hits = [(m.start(), name) for name, pat in INVESTMENT_ISSUERS
+            for m in [re.search(pat, low)] if m]
+    return min(hits)[1] if hits else ""
+
+
+def payment_due(text: str, closing) -> str:
+    """The card's payment due date, as ISO, or "" when none is printed.
+
+    Card statements print it beside the minimum payment ("Payment Due Date
+    12/22/25"). Without a printed year it is the first such date after the
+    statement closes, which is how a January due date on a December statement
+    lands in the right year.
+    """
+    m = _DUE.search(text or "")
+    if not m:
+        return ""
+    ref = closing.year if closing else date.today().year
+    d = parse_date(m.group(1), ref)
+    if d is None:
+        return ""
+    has_year = re.search(r"\d{4}|\d{1,2}/\d{1,2}/\d{2}", m.group(1))
+    if closing and not has_year and d < closing:
+        d = d.replace(year=d.year + 1)
+    return d.isoformat()
+
+
+def read_payment_due(path, closing, password=None) -> str:
+    """The due date printed on a statement PDF already in the store.
+
+    Statements imported before due dates were read can get one without a full
+    re-parse, which would also re-read and re-reconcile every transaction.
+    """
+    kwargs = {"password": password} if password else {}
+    with pdfplumber.open(path, **kwargs) as pdf:
+        full = "\n".join(words_text(ws) for page in pdf.pages for ws in page_lines(page))
+    return payment_due(full, closing)
+
 
 def _check_balances(fields):
     """Drop a previous balance that the statement's own arithmetic disowns.

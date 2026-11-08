@@ -216,3 +216,64 @@ class StoreTest(support.TempDirMixin, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AppExportTest(unittest.TestCase):
+    """Leaving another budgeting app: its one-file export, every account in it."""
+
+    APPS = os.path.join(support.TESTS_DIR, "fixtures", "apps")
+
+    def read(self, name):
+        path = os.path.join(self.APPS, name)
+        return importer.detect_format(path), importer.read_file(path)
+
+    def rows(self, accounts):
+        return {a.name.rsplit("#", 1)[1]: [(t.amount, t.category) for t in a.rows]
+                for a in accounts}
+
+    def test_mint_signs_by_transaction_type(self):
+        fmt, accts = self.read("mint_transactions.csv")
+        self.assertEqual(fmt, "mint")
+        rows = self.rows(accts)
+        self.assertEqual(rows["Everyday Checking"], [(-2500.0, "Income")])
+        self.assertEqual(rows["Chase Sapphire"][0], (84.12, "Groceries"))
+        self.assertEqual(rows["Chase Sapphire"][2][0], -23.99)        # the refund comes in
+
+    def test_ynab_outflow_and_inflow(self):
+        fmt, accts = self.read("ynab_register.csv")
+        self.assertEqual(fmt, "ynab")
+        rows = self.rows(accts)
+        # Our guess for "Employer" would be wrong; YNAB's own label says income.
+        self.assertEqual(rows["Checking"], [(1500.0, "Rent/Housing"), (-3200.0, "Income")])
+        self.assertEqual(rows["Visa"], [(4.5, "Coffee")])
+
+    def test_monarch_takes_the_last_four_from_the_account_name(self):
+        fmt, accts = self.read("monarch_transactions.csv")
+        self.assertEqual(fmt, "monarch")
+        self.assertEqual(sorted(a.account for a in accts), ["1005", "4321"])
+        # Our "Subscriptions" stands over Monarch's broader "Entertainment".
+        self.assertIn((11.99, "Subscriptions"), self.rows(accts)["Amex Gold (...1005)"])
+
+    def test_tiller_keeps_both_account_columns(self):
+        fmt, accts = self.read("tiller_transactions.csv")
+        self.assertEqual(fmt, "tiller")
+        self.assertEqual({a.name.rsplit("#", 1)[1]: (a.account, a.issuer) for a in accts},
+                         {"Freedom Unlimited": ("7788", "Chase"), "Savings": ("2210", "Ally")})
+
+    def test_copilot_spending_is_positive(self):
+        fmt, accts = self.read("copilot_transactions.csv")
+        self.assertEqual(fmt, "copilot")
+        rows = self.rows(accts)
+        self.assertEqual(rows["Checking"], [(-2800.0, "Income")])
+        self.assertEqual(rows["Sapphire Preferred"][0], (12.85, "Dining"))
+
+    def test_no_balances_means_unverified_not_verified(self):
+        for name in os.listdir(self.APPS):
+            for acct in importer.read_file(os.path.join(self.APPS, name)):
+                with self.subTest(name=name, account=acct.name):
+                    self.assertIsNone(acct.checked)
+                    self.assertIn("cannot be checked", acct.note)
+
+    def test_an_ordinary_bank_csv_is_not_mistaken_for_an_app(self):
+        path = os.path.join(support.TESTS_DIR, "fixtures", "exports", "chase_checking_4321.csv")
+        self.assertEqual(importer.detect_format(path), "csv")

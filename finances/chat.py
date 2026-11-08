@@ -36,6 +36,7 @@ import urllib.parse
 import urllib.request
 from datetime import date
 
+from finances import cite
 from finances.mcp_server import INSTRUCTIONS, TOOLS, Server
 
 # The current models from each provider's own model list, newest family only:
@@ -74,7 +75,9 @@ MAX_HISTORY = 200           # turns kept in the store
 SYSTEM = INSTRUCTIONS + (
     "\n\nYou are answering inside the user's finance dashboard. Today is {today}. "
     "Use the tools for every number you state; never estimate one you could look "
-    "up. Answer in a few short sentences or a short bulleted list, leading with "
+    "up. Write each amount with its currency symbol, as the tools give it: every "
+    "amount in your answer is checked against the lookups, and one that is not "
+    "there is shown to the user as unverified. Answer in a few short sentences or a short bulleted list, leading with "
     "the answer. Plain text with **bold** and '- ' bullets only: no tables, no "
     "headings. If the data cannot answer the question, say what is missing.")
 
@@ -103,7 +106,8 @@ def remember(db_path: str, question: str, reply: dict) -> None:
         turns = turns if isinstance(turns, list) else []
         turns += [{"role": "user", "content": question, "at": at},
                   {"role": "assistant", "content": reply["answer"], "at": at,
-                   "steps": reply["steps"], "model": reply["model"]}]
+                   "steps": reply["steps"], "model": reply["model"],
+                   "check": reply.get("check")}]
         db.set_setting(HISTORY_KEY, turns[-MAX_HISTORY:])
 
 
@@ -111,6 +115,14 @@ def forget(db_path: str) -> None:
     from finances.database import FinanceDB
     with FinanceDB(db_path) as db:
         db.set_setting(HISTORY_KEY, None)
+
+
+def _coverage(db_path: str) -> dict:
+    from finances.database import FinanceDB
+    with FinanceDB(db_path) as db:
+        rec = [s.reconciled for s in db.statement_models() if s.checkable]
+    return {"statements": len(rec), "reconciled": rec.count(1),
+            "mismatched": rec.count(0), "unchecked": rec.count(None)}
 
 
 class ChatError(Exception):
@@ -194,11 +206,16 @@ class Chat:
 
     def __init__(self, db_path: str, post=_post):
         self.server = Server(db_path)
+        self.db_path = db_path
         self.post = post
+        self.results: list[tuple[str, str]] = []
 
     def run_tool(self, name: str, args: dict) -> tuple[str, bool]:
         out = self.server.call(name, args if isinstance(args, dict) else {})
         text = out["content"][0]["text"]
+        if not out.get("isError"):
+            # Everything the model was shown, for checking its answer against.
+            self.results.append((name, text))
         if len(text) > MAX_TOOL_TEXT:
             text = text[:MAX_TOOL_TEXT] + "\n... (cut short; narrow the question)"
         return text, not out.get("isError")
@@ -245,9 +262,10 @@ class Chat:
                 model, key, system, history, os.environ["OPENAI_BASE_URL"])
         else:
             answer, steps, usage = self._openai(model, key, system, history)
-        answer = _THINK.sub("", answer or "")
-        return {"answer": answer.strip(), "steps": steps, "provider": provider,
-                "model": model, "usage": usage}
+        answer = _THINK.sub("", answer or "").strip()
+        return {"answer": answer, "steps": steps, "provider": provider,
+                "model": model, "usage": usage,
+                "check": cite.check(answer, self.results, _coverage(self.db_path))}
 
     # -- Anthropic Messages API -------------------------------------------
     def _anthropic(self, model, key, system, history):

@@ -1,32 +1,46 @@
 #!/usr/bin/env python3
 """
-finances — one way in.
+finances — see where your money goes, from your own statements.
 
-The toolchain grew as a set of separate scripts, each with its own arguments and
-its own idea of what to read. That is fine when you wrote them, and hostile when
-you did not: there was no way to discover what existed, and no stated order to
-run things in. This is the front door.
+Start here:
 
-    finances demo                made-up data to try everything on  -> demo.db
-    finances parse PDFs          statements  -> finances.db
-    finances import exports/     bank CSV, OFX/QFX, CAMT.053, MT940 -> finances.db
+    finances demo                a year of made-up data to try it on  -> demo.db
+    finances web --db demo.db    ...and look at it in the dashboard
+
+    finances parse ~/statements  your statement PDFs                  -> finances.db
+    finances import ~/Downloads  bank CSV/OFX/CAMT.053/MT940, or a Mint,
+                                 YNAB, Monarch, Copilot or Tiller export
     finances web                 the dashboard, in a browser
-    finances check               does the data agree with the statements?
-    finances categorize stats    how much is actually labelled
-    finances analyze             the dashboard
-    finances cashflow            the next 60 days
-    finances plan status         goals against your real surplus
+    finances watch               add new statements from Downloads as they arrive
+
+Then:
+
+    finances check               does every number agree with the statements?
     finances budget              monthly limits, and the subscriptions to cancel
     finances wrapped             your year in money
+    finances cashflow            the next 60 days
+    finances plan status         goals against your real surplus
+    finances analyze             a one-page HTML report
+    finances ask "..."           a question in plain English, offline
+    finances export xlsx         Excel; also beancount, hledger, YNAB, Actual, CSV
+    finances mcp                 let Claude and other AI assistants read the store
+    finances feed connect TOKEN  optional live feed (SimpleFIN), checked by statements
+    finances items orders.csv    what was in each Amazon order
+
+For bookkeeping and developers:
+
+    finances verify FILES        check statements and exports, with an evidence report
+    finances reconcile           match bank, processor (Stripe) and ledger records
+    finances evidence check      re-check an evidence report
+    finances client intake ...   a store per client, folder intake, workpapers
+    finances accuracy            per bank, how often statements reconcile first try
+
+    finances categorize stats    how much is actually labelled
     finances audit               the reckoning
     finances cpi                 your own inflation rate
-    finances backtest            how accurate are the forecasts
-    finances ask "..."           natural language, offline
+    finances backtest            how accurate the forecasts are
     finances anonymize           make it safe to share
     finances enrich              local LLM merchant cleanup
-    finances mcp                 let Claude and other AI assistants read the store
-    finances export beancount    hand the data to beancount, hledger, YNAB, Actual
-
     finances pipeline PDFs       parse, categorize and analyze in one go
 
 Every subcommand forwards the rest of the arguments to the underlying tool, so
@@ -63,6 +77,11 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "fx":         ("fx", "base currency and exchange rates for multi-currency stores"),
     "enrich":     ("llm_enrich", "clean up merchant names with a local LLM"),
     "engine":     ("engine", "the raw unified view over the store"),
+    "watch":      ("sources", "add new statements from Downloads as they arrive"),
+    "feed":       ("simplefin", "optional live bank feed (SimpleFIN), checked by statements"),
+    "accuracy":   ("accuracy", "how often each bank's statements reconcile on the first try"),
+    "items":      ("lineitems", "the items behind Amazon (or any shop's) charges"),
+    "client":     ("practice", "for bookkeepers: a store per client, intake, workpapers"),
     "web":        ("api", "serve the web dashboard on localhost"),
     "mcp":        ("mcp_server", "serve the store to AI assistants over MCP (read-only)"),
     "verify":     ("verify.cli", "check statements and exports, with an evidence report"),
@@ -229,16 +248,50 @@ def cmd_pipeline(argv: list[str]) -> int:
     return 0
 
 
+# Commands that only read the store. Run where there is none, they would leave an
+# empty finances.db behind that every later command then trusts as real.
+READS_STORE = {"check", "accuracy", "analyze", "cashflow", "wrapped", "cpi", "backtest", "export",
+               "engine", "audit", "ask", "plan", "budget", "categorize"}
+
+GETTING_STARTED = """\
+There is no {db} here yet, so there is nothing to read.
+
+  Try it on made-up data:   finances demo   then   finances web --db demo.db
+  Use your own files:       finances parse ~/Downloads/statements
+                            finances import ~/Downloads/transactions.csv
+
+Or point at a store elsewhere with --db PATH."""
+
+
+def _db_arg(argv: list[str]) -> str:
+    for i, a in enumerate(argv):
+        if a == "--db" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--db="):
+            return a.split("=", 1)[1]
+    return DEFAULT_DB
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):
         usage()
     cmd = ALIASES.get(argv[0], argv[0])
     if cmd not in COMMANDS:
-        print(f"finances: unknown command {argv[0]!r}\n", file=sys.stderr)
-        usage(2)
+        import difflib
+        near = difflib.get_close_matches(argv[0], [*COMMANDS, *ALIASES], n=1, cutoff=0.6)
+        hint = f" Did you mean 'finances {near[0]}'?" if near else ""
+        print(f"finances: unknown command {argv[0]!r}.{hint}\n"
+              f"Run 'finances' on its own for the list.", file=sys.stderr)
+        return 2
 
     rest = argv[1:]
+    if cmd in READS_STORE and not any(a in ("-h", "--help") for a in rest):
+        import os
+        db = _db_arg(rest)
+        if not os.path.exists(db):
+            print(GETTING_STARTED.format(db=db), file=sys.stderr)
+            return 1
     if cmd == "check":
         return cmd_check(rest)
     if cmd == "pipeline":

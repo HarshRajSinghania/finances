@@ -1,0 +1,4 @@
+date,name,amount,status,category,parent category,excluded,tags,type,account,account mask,note,recurring
+2024-07-01,Chipotle,12.85,posted,Restaurants,Food,false,,regular,Sapphire Preferred,4455,,
+2024-07-02,Paycheck,-2800.00,posted,Income,,false,,income,Checking,9911,,
+2024-07-03,Hulu,17.99,posted,Streaming,Entertainment,false,,regular,Sapphire Preferred,4455,,Hulu
