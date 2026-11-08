@@ -1,0 +1,106 @@
+name: finances
+services:
+  finances:
+    image: ghcr.io/roshanlam/finances:0.5.0
+    # The image runs as UID 1000, but CasaOS creates /DATA/AppData/<app> owned
+    # by root, so the store could not be written. Root inside the container is
+    # the usual CasaOS arrangement; the container has no other privileges.
+    user: "0:0"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          memory: 128M
+    environment:
+      FINANCES_DB: /data/finances.db
+      FINANCES_PDF_DIR: /data/PDFs
+      # The server refuses any Host header that is not localhost. List every
+      # name or IP the dashboard is opened at, e.g. casaos.local,192.168.1.20
+      FINANCES_ALLOWED_HOSTS: casaos.local,zimaos.local
+      FINANCES_CURRENCY: ""
+      FINANCES_LLM_ENDPOINT: ""
+    volumes:
+      - type: bind
+        source: /DATA/AppData/$AppID/data
+        target: /data
+      - type: bind
+        source: /DATA/AppData/$AppID/PDFs
+        target: /data/PDFs
+    ports:
+      - target: 8787
+        published: "8797"
+        protocol: tcp
+    # Service-level x-casaos: read by CasaOS's settings screen; ignored by the
+    # v2 store build.
+    x-casaos:
+      envs:
+        - container: FINANCES_ALLOWED_HOSTS
+          description:
+            en_US: Names or IP addresses you open the dashboard at, comma-separated (add this device's IP)
+        - container: FINANCES_CURRENCY
+          description:
+            en_US: Optional. Report totals in this currency, e.g. USD or EUR
+        - container: FINANCES_LLM_ENDPOINT
+          description:
+            en_US: Optional. An OpenAI-compatible endpoint for the Ask page, e.g. http://<device-ip>:11434/v1 for Ollama
+      volumes:
+        - container: /data
+          description:
+            en_US: The store (finances.db), learned rules and reports
+        - container: /data/PDFs
+          description:
+            en_US: Statement PDFs and bank exports. Put files here, or drop them on the dashboard
+      ports:
+        - container: "8787"
+          description:
+            en_US: Web dashboard
+
+x-casaos:
+  id: io.github.roshanlam.finances
+  main: finances
+  index: /
+  port_map: "8797"
+  scheme: http
+  icon: https://cdn.jsdelivr.net/gh/IceWhaleTech/CasaOS-AppStore@main/Apps/Finances/icon.svg
+  screenshot_link:
+    - https://cdn.jsdelivr.net/gh/IceWhaleTech/CasaOS-AppStore@main/Apps/Finances/screenshot-1.png
+    - https://cdn.jsdelivr.net/gh/IceWhaleTech/CasaOS-AppStore@main/Apps/Finances/screenshot-2.png
+    - https://cdn.jsdelivr.net/gh/IceWhaleTech/CasaOS-AppStore@main/Apps/Finances/screenshot-3.png
+  thumbnail: ""
+  title:
+    en_US: finances
+  tagline:
+    en_US: See where your money goes, from statements checked against their own totals
+  description:
+    en_US: |
+      finances reads the bank statement PDFs and exports your bank already gives you, with no bank login, no Plaid and no account linking, and turns them into a dashboard: spending by category, subscriptions and their price rises, a cash-flow forecast, budgets, and a year in review.
+
+      A statement prints its own totals, so the extraction can be proved correct. After reading every line, finances adds them up and checks them against the statement's printed balances and totals. If a statement does not reconcile, it says which one and by how much; missing months are reported as missing, not counted as zero.
+
+      **Reads:** statement PDFs from many US banks and card issuers, CSV, OFX/QFX, CAMT.053 and MT940 exports, and exports from Mint, YNAB, Monarch, Copilot and Tiller.
+
+      **Nothing leaves your device.** The optional Ask page answers questions in plain English with a model you choose, such as Ollama on the same machine.
+
+      **Learn more:**
+      - [GitHub repository](https://github.com/roshanlam/finances)
+      - [Container image](https://github.com/roshanlam/finances/pkgs/container/finances)
+  tips:
+    before_install:
+      en_US: |
+        finances has no login of its own: anyone who can reach port 8797 can read every transaction. Only run it on a network you trust.
+
+        If you open the dashboard by IP address (http://192.168.x.x:8797), add that IP to FINANCES_ALLOWED_HOSTS in the app's settings, or the dashboard will answer "requests are accepted from localhost only".
+  author: roshanlam
+  developer: roshanlam
+  category: Finance
+  architectures:
+    - amd64
+    - arm64
+  version: "0.5.0"
+  update_at: "2026-11-08"
+  release_notes:
+    en_US: First release on the CasaOS App Store.
+  website: https://github.com/roshanlam/finances
+  repo: https://github.com/roshanlam/finances
+  support: https://github.com/roshanlam/finances/issues
+  docs: https://github.com/roshanlam/finances#readme

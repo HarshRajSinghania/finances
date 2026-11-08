@@ -1,0 +1,83 @@
+manifestVersion: 1
+id: finances
+storage:
+  dataRoot: data
+folderAccess:
+  - id: statements
+    name: Statements
+    note: >-
+      Pick a folder of bank statement PDFs and exports (CSV, OFX, QFX, CAMT.053, MT940).
+      They are read each time the app starts. Files dropped on the dashboard are saved here too.
+    mounts:
+      - service: web
+        targetPath: /data/PDFs
+        readOnly: false
+environment:
+  - name: FINANCES_ALLOWED_HOSTS
+    services:
+      - web
+    default: umbrel.local
+    note: >-
+      Comma-separated names the dashboard may be opened at. Add your Umbrel's IP address
+      (for example umbrel.local,192.168.1.20) if you open it by IP instead of by name.
+  - name: FINANCES_LLM_ENDPOINT
+    services:
+      - web
+    note: >-
+      Optional, for the Ask page. With the Ollama app installed, use
+      http://ollama_ollama_1:11434/v1
+  - name: FINANCES_CURRENCY
+    services:
+      - web
+    note: Optional. Totals are reported in this currency, for example USD or EUR.
+category: finance
+name: finances
+version: "0.5.0"
+tagline: See where your money goes, from statements checked against their own totals
+description: >-
+  finances has no login of its own. Keep "Require Umbrel login" turned on for this app:
+  anyone who can open it can read every transaction.
+
+
+  finances reads the bank statement PDFs and exports your bank already gives you, with no
+  bank login, no Plaid and no account linking, and turns them into a dashboard: spending by
+  category, subscriptions and their price rises, a cash-flow forecast, budgets, and a year
+  in review.
+
+
+  A statement prints its own totals, so the extraction can be proved correct. After reading
+  every line, finances adds them up and checks them against the statement's printed opening
+  balance, closing balance and totals. If a statement does not reconcile, it says which one
+  and by how much, and missing months are reported as missing rather than counted as zero.
+
+
+  Drop statements on the dashboard, or choose a folder of them in this app's settings.
+  Supported: statement PDFs from many US banks and card issuers, CSV, OFX/QFX, CAMT.053 and
+  MT940 exports, and exports from Mint, YNAB, Monarch, Copilot and Tiller.
+
+
+  Nothing leaves your Umbrel. The optional Ask page can answer questions in plain English
+  using a model you choose, such as the Ollama app running on the same device.
+releaseNotes: ""
+
+developer: roshanlam
+website: https://github.com/roshanlam/finances
+dependencies: []
+repo: https://github.com/roshanlam/finances
+support: https://github.com/roshanlam/finances/issues
+
+port: 8797
+# The Umbrel team adds gallery images before merge, so an official submission
+# leaves this empty. A community app store hosts its own, for example:
+#   gallery:
+#     - https://raw.githubusercontent.com/roshanlam/finances/main/docs/umbrel/1.jpg
+#     - https://raw.githubusercontent.com/roshanlam/finances/main/docs/umbrel/2.jpg
+#     - https://raw.githubusercontent.com/roshanlam/finances/main/docs/umbrel/3.jpg
+gallery: []
+path: ""
+
+defaultUsername: ""
+defaultPassword: ""
+
+submitter: roshanlam
+submission: ""

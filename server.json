@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.roshanlam/finances",
+  "title": "finances",
+  "description": "Finance MCP that never sees a bank password. Answers come from your own statements, each reconciled.",
+  "repository": {
+    "url": "https://github.com/roshanlam/finances",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/roshanlam/finances",
+  "version": "0.5.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "finances",
+      "version": "0.5.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "valueHint": "mcp",
+          "description": "The read-only MCP server subcommand."
+        },
+        {
+          "type": "named",
+          "name": "--db",
+          "description": "Absolute path to your finances.db store, built by `finances parse` / `finances import`. Try `finances demo` for made-up data.",
+          "format": "filepath",
+          "isRequired": true,
+          "placeholder": "/Users/you/finances/finances.db"
+        }
+      ]
+    }
+  ]
+}

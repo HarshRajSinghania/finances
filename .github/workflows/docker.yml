@@ -1,0 +1,97 @@
+# Builds the image from ./Dockerfile for amd64 and arm64 and pushes it to
+# ghcr.io/roshanlam/finances.
+#
+#   tag v0.5.0  ->  ghcr.io/roshanlam/finances:0.5.0, :0.5, :latest
+#   manual run  ->  ghcr.io/roshanlam/finances:<branch>, :sha-<short>
+#
+# The Umbrel and CasaOS packages (packaging/) pin a version tag from here.
+# After the first push, make the package public once: GitHub -> Packages ->
+# finances -> Package settings -> Change visibility, so it pulls without a login.
+
+name: docker
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/finances
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        env:
+          # Put the annotations on the multi-arch index too, which is what
+          # ghcr.io reads for the package page's description and repo link.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=sha,enable=${{ github.event_name == 'workflow_dispatch' }}
+          flavor: |
+            latest=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.title=finances
+            org.opencontainers.image.description=See where your money goes from your own bank statements, checked against their printed totals. No bank login.
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+          annotations: |
+            org.opencontainers.image.description=See where your money goes from your own bank statements, checked against their printed totals. No bank login.
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      # The app-store packages pin tag@digest; this is the digest to paste.
+      - name: Digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          {
+            echo "### ${IMAGE}:${VERSION}"
+            echo
+            echo '```'
+            echo "${IMAGE}:${VERSION}@${DIGEST}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

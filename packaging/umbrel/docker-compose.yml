@@ -1,0 +1,33 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # <app-id>_<service>_1, the name umbrelOS gives the web container.
+      APP_HOST: finances_web_1
+      APP_PORT: 8787
+
+  web:
+    # For the official App Store, pin the multi-arch index digest as well:
+    #   ghcr.io/roshanlam/finances:0.5.0@sha256:<digest>
+    # (printed in the summary of the docker workflow run, or by
+    #  `docker buildx imagetools inspect ghcr.io/roshanlam/finances:0.5.0`).
+    image: ghcr.io/roshanlam/finances:0.5.0
+    user: "1000:1000"
+    init: true
+    restart: on-failure
+    volumes:
+      # The store, learned rules, reports, and data/PDFs for statements.
+      - ${APP_DATA_DIR}/data:/data
+    environment:
+      FINANCES_DB: /data/finances.db
+      FINANCES_PDF_DIR: /data/PDFs
+      # The server refuses any Host header that is not localhost (DNS-rebinding
+      # protection). These are the names the dashboard is reached at on Umbrel:
+      # the device's .local name and hostname, plus the container name in case
+      # the proxy forwards with its own Host. Users who open it by IP add the IP
+      # in the app's settings.
+      FINANCES_ALLOWED_HOSTS: ${FINANCES_ALLOWED_HOSTS:-${DEVICE_DOMAIN_NAME},${DEVICE_HOSTNAME},finances_web_1}
+      FINANCES_LLM_ENDPOINT: ${FINANCES_LLM_ENDPOINT:-}
+      FINANCES_LLM_FALLBACK: "0"
+      FINANCES_CURRENCY: ${FINANCES_CURRENCY:-}
