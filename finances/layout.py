@@ -330,9 +330,20 @@ def main(argv=None) -> int:
     ap.add_argument("--check", action="store_true", help="parse a layout file and report")
     ap.add_argument("--password")
     args = ap.parse_args(argv)
+    try:
+        return _run(ap, args)
+    except Exception as e:                       # noqa: BLE001  (a scan, a password, a bad file)
+        print(f"error: {e or type(e).__name__}", file=sys.stderr)
+        return 1
+
+
+def _run(ap, args) -> int:
     if args.check:
         with open(args.file, encoding="utf-8") as fh:
-            r = check(fh.read(), args.file)
+            text = fh.read()
+        if not any(line.strip() for page in body_pages(text) for line in page):
+            raise ValueError(f"{args.file} has no layout in it, only a header")
+        r = check(text, args.file)
         print(f"  bank: {r['bank'] or 'Unknown'}   transactions: {r['transactions']}   "
               f"{'reconciles' if r['reconciled'] == 1 else 'does not reconcile'}")
         for p in r["problems"]:
