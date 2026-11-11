@@ -20,7 +20,7 @@ brew tap-new roshanlam/homebrew-tap --no-git     # scaffolds Formula/ and a READ
 #   or create an empty public repo named homebrew-tap on GitHub and clone it
 cp packaging/homebrew/finances.rb "$(brew --repository)/Library/Taps/roshanlam/homebrew-tap/Formula/"
 cd "$(brew --repository)/Library/Taps/roshanlam/homebrew-tap"
-git init && git add . && git commit -m "finances 0.5.0"
+git init && git add . && git commit -m "finances 0.6.0"
 git remote add origin git@github.com:roshanlam/homebrew-tap.git
 git push -u origin main
 ```
@@ -52,7 +52,7 @@ After the new version is on PyPI, update `url`, `version` and `sha256` in
 The wheel URL contains a hash path, so take it from PyPI rather than guessing:
 
 ```bash
-V=0.5.0
+V=0.6.0
 curl -s "https://pypi.org/pypi/finances/$V/json" | python3 -c '
 import json, sys
 for f in json.load(sys.stdin)["urls"]:
