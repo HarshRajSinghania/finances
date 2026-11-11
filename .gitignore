@@ -51,3 +51,4 @@ tests/golden/
 # secrets, e.g. the PyPI token
 .env
 .env.*
+/site/

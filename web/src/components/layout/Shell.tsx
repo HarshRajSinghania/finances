@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton, TooltipProvider } from "@/components/ui/misc"
 import { useTheme, type Theme } from "@/hooks/useApi"
 import { useReadOnly } from "@/hooks/useSession"
+import { DEMO } from "@/lib/demo"
 import { dateLabel } from "@/lib/format"
 import type { Summary } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -139,7 +140,7 @@ export function Shell({
                 {summary && summary.transactions > 0 && (
                   <Button variant="ghost" size="sm" asChild>
                     <a
-                      href="/api/export.xlsx"
+                      href={DEMO ? `${import.meta.env.BASE_URL}demo-api/export.xlsx` : "/api/export.xlsx"}
                       download
                       aria-label="Download everything as an Excel workbook"
                       title="Transactions, months, categories, subscriptions and statements, one sheet each"
@@ -149,12 +150,22 @@ export function Shell({
                     </a>
                   </Button>
                 )}
-                {readOnly && (
-                  <span className="rounded-full border border-[var(--color-hairline)] px-2 py-0.5 text-xs text-[var(--color-ink-secondary)]">
-                    Read-only
-                  </span>
+                {DEMO ? (
+                  <a
+                    href="https://github.com/roshanlam/finances"
+                    className="rounded-full border border-[var(--color-hairline)] px-2 py-0.5 text-xs text-[var(--color-ink-secondary)] hover:text-[var(--color-ink)]"
+                    title="Every number here is invented. Install it to read your own statements."
+                  >
+                    Demo, made-up data
+                  </a>
+                ) : (
+                  readOnly && (
+                    <span className="rounded-full border border-[var(--color-hairline)] px-2 py-0.5 text-xs text-[var(--color-ink-secondary)]">
+                      Read-only
+                    </span>
+                  )
                 )}
-                <PhoneShare />
+                {!DEMO && <PhoneShare />}
                 <Button
                   variant="ghost"
                   size="icon"
