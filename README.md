@@ -17,7 +17,7 @@ machine.
 
 ```bash
 uvx finances demo && uvx finances web --db demo.db --open    # made-up data
-uv tool install finances                                     # or pipx / pip install finances
+uv tool install finances      # or: brew install roshanlam/tap/finances, pipx install finances
 ```
 
 ## Does it read my bank?
