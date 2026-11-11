@@ -1,7 +1,7 @@
 # Builds the image from ./Dockerfile for amd64 and arm64 and pushes it to
 # ghcr.io/roshanlam/finances.
 #
-#   tag v0.5.0  ->  ghcr.io/roshanlam/finances:0.5.0, :0.5, :latest
+#   tag v0.6.0  ->  ghcr.io/roshanlam/finances:0.6.0, :0.6, :latest
 #   manual run  ->  ghcr.io/roshanlam/finances:<branch>, :sha-<short>
 #
 # The Umbrel and CasaOS packages (packaging/) pin a version tag from here.

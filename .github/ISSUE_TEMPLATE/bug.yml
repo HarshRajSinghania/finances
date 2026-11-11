@@ -1,0 +1,36 @@
+name: Something is wrong
+description: A crash, a wrong number, or the dashboard doing something odd
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste real statements, amounts, account numbers or names.** If a statement does not read correctly, use the "Support a bank" form instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      description: Ideally with the demo store (`finances demo`), so anyone can repeat it.
+      placeholder: |
+        1. finances demo
+        2. finances web --db demo.db
+        3. ...
+  - type: textarea
+    id: output
+    attributes:
+      label: Error output
+      description: The traceback or terminal output, with anything personal removed.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version and system
+      placeholder: "finances 0.6.0 (pip show finances), macOS 15, Python 3.13"
+    validations:
+      required: true

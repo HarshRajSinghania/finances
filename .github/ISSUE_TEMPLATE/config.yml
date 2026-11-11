@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: A question, or how do I...
+    url: https://github.com/roshanlam/finances/discussions/categories/q-a
+    about: Ask in Discussions, where the answer helps the next person too.
+  - name: Share your accuracy numbers
+    url: https://github.com/roshanlam/finances/discussions/categories/show-and-tell
+    about: Post the output of `finances accuracy --markdown` (bank names and counts only).
+  - name: A security problem
+    url: https://github.com/roshanlam/finances/security/advisories/new
+    about: Report it privately, please, not in a public issue.

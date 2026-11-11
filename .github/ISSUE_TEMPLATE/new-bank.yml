@@ -5,7 +5,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Never attach a real statement or export.** Redact names, account numbers and amounts, or describe the layout.
+        **Never attach a real statement or export.** For a PDF, attach its scrambled layout instead:
+
+        ```
+        finances report-bank statement.pdf
+        ```
+
+        That writes `statement-layout.txt`: every line at its own position, with names, merchants, amounts and account numbers replaced by random ones. Dates and the statement's own headings are kept, because they are what the parser reads. It is plain text, so open it and read it before you attach it.
   - type: input
     id: bank
     attributes:
@@ -21,14 +27,24 @@ body:
     validations:
       required: true
   - type: textarea
+    id: layout
+    attributes:
+      label: The layout (for a PDF)
+      description: Drag `statement-layout.txt` here, or paste it. Its header already says what the parser read.
+  - type: textarea
     id: shape
     attributes:
-      label: What the file looks like
-      description: For a CSV, the header row and one made-up row. For a PDF, the column headings of the transaction table.
+      label: What the file looks like (for an export)
+      description: The header row and one made-up row.
       render: text
   - type: textarea
-    id: output
+    id: wrong
     attributes:
-      label: What finances printed
-      description: Output of `finances import <file>` or `finances parse <file> --dump-columns`, with personal details removed.
-      render: text
+      label: What came out wrong
+      description: Missing transactions, wrong signs, the wrong bank, a total that does not add up...
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Helping
+      options:
+        - label: I would like to add this bank myself (CONTRIBUTING.md, "Add a bank")
