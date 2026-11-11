@@ -1,7 +1,7 @@
 name: finances
 services:
   finances:
-    image: ghcr.io/roshanlam/finances:0.5.0
+    image: ghcr.io/roshanlam/finances:0.6.0
     # The image runs as UID 1000, but CasaOS creates /DATA/AppData/<app> owned
     # by root, so the store could not be written. Root inside the container is
     # the usual CasaOS arrangement; the container has no other privileges.
@@ -96,7 +96,7 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "0.5.0"
+  version: "0.6.0"
   update_at: "2026-11-08"
   release_notes:
     en_US: First release on the CasaOS App Store.

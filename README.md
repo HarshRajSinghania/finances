@@ -3,24 +3,61 @@
 <!-- mcp-name: io.github.roshanlam/finances -->
 
 [![PyPI](https://img.shields.io/pypi/v/finances)](https://pypi.org/project/finances/)
+[![tests](https://github.com/roshanlam/finances/actions/workflows/ci.yml/badge.svg)](https://github.com/roshanlam/finances/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://github.com/roshanlam/finances/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/roshanlam/finances/blob/main/LICENSE)
 
-See where your money goes from your own bank statements and exports. No bank
-login, no Plaid, no account linking, no cloud. Everything runs on your machine
-and nothing is uploaded anywhere.
+See where your money goes from the bank statements you already have, checked
+against their own printed totals, with no bank login and nothing leaving your
+machine.
+
+[![A 20-second tour of finances: asking questions, reconciling bank, Stripe and books, re-checkable evidence](https://raw.githubusercontent.com/roshanlam/finances/main/docs/demo.gif)](https://github.com/roshanlam/finances/blob/main/docs/demo.mp4)
+
+**[Open the live demo](https://finances-demo-five.vercel.app)** (made-up data, nothing to install), or run it yourself:
 
 ```bash
-uvx finances demo && uvx finances web --db demo.db --open    # try it on made-up data
+uvx finances demo && uvx finances web --db demo.db --open    # made-up data
+uv tool install finances                                     # or pipx / pip install finances
 ```
 
-or install it: `uv tool install finances` / `pipx install finances` / `pip install finances`.
+## Does it read my bank?
 
-[![A 20-second tour of finances 0.4: asking questions, reconciling bank, Stripe and books, re-checkable evidence](https://raw.githubusercontent.com/roshanlam/finances/main/docs/demo.gif)](https://github.com/roshanlam/finances/blob/main/docs/demo.mp4)
+A statement prints its own totals, so whether a statement was read correctly is
+not a matter of opinion: the transactions add up to those totals or they do
+not. `finances accuracy` counts that per bank, from your own store, and prints
+only bank names and counts:
 
-The thing that makes it different: **a statement prints its own totals, so the
-extraction can be proved correct.** Every figure this produces traces back to a
-line on a statement, and the tool tells you when it cannot.
+| Bank | Statements | Reconciled first try | With a fallback | Did not | No totals printed |
+|---|---:|---:|---:|---:|---:|
+| Chase | 14 | 14 (100%) | 0 | 0 | 0 |
+| Capital One | 7 | 7 (100%) | 0 | 0 | 0 |
+| Discover | 6 | 6 (100%) | 0 | 0 | 0 |
+| Amex | 5 | 5 (100%) | 0 | 0 | 0 |
+| **All** | 32 | 32 (100%) | 0 | 0 | 0 |
+
+That is one person's statements, so it is a start, not a survey.
+[Add your numbers](https://github.com/roshanlam/finances/discussions/categories/show-and-tell)
+(`finances accuracy --markdown`) and this table grows.
+
+It recognises statements from Ally, Amex, Apple Card, Bank of America, Barclays,
+Capital One, Chase, Citi, Discover, HSBC, PNC, Schwab, Synchrony, TD Bank,
+US Bank and Wells Fargo, and account values from Betterment, E\*TRADE,
+Fidelity, Interactive Brokers, Merrill, Robinhood, Schwab, Vanguard and
+Wealthfront. The parser is not per bank: it reads column positions and the
+summary box, so other layouts often work too. When one does not, a local model
+can step in, and its rows are kept only if they reconcile.
+
+**Your bank not reading right?** `finances report-bank statement.pdf` writes
+the statement's layout with your names, merchants, amounts and account numbers
+scrambled, to attach to a
+[Support a bank](https://github.com/roshanlam/finances/issues/new?template=new-bank.yml)
+issue. Adding a bank is one small file and a made-up statement; see
+[CONTRIBUTING.md](https://github.com/roshanlam/finances/blob/main/CONTRIBUTING.md).
+
+## Why the numbers can be trusted
+
+Every figure this produces traces back to a line on a statement, and the tool
+tells you when it cannot.
 
 ```
 $ finances check
@@ -212,7 +249,9 @@ file checks out.
 
 How often does the parser get your bank right? `finances accuracy` counts, per
 bank, how many statements reconciled on the first try. It contains only bank
-names and counts, so it is safe to share.
+names and counts, so it is safe to share. If a bank does not read right,
+`finances report-bank statement.pdf` writes its layout with everything personal
+scrambled, to attach to an issue.
 
 The server makes no outbound requests, binds to localhost, and refuses any
 request that does not come from a page on localhost — so another website open
@@ -286,6 +325,7 @@ command are also environment variables:
 | `feed connect TOKEN` | optional live feed through SimpleFIN Bridge, checked by statements | `finances.db` |
 | `items orders.csv` | the items behind Amazon (or any shop's) charges | `finances.db` |
 | `accuracy` | how often each bank's statements reconcile on the first try | — |
+| `report-bank` | a statement's layout with your details scrambled, to report a bank | — |
 | `client intake NAME DIR` | for bookkeepers: read a client's folder; `client workpapers NAME` | the client's folder |
 | `demo` | a year of made-up statements, to try everything on | `demo.db` |
 | `pipeline PDFs/` | parse + categorize + analyze in one run | all of the above |
@@ -689,8 +729,11 @@ $ finances categorize eval
 git clone https://github.com/roshanlam/finances && cd finances
 uv sync                                  # editable install into .venv
 uv run finances demo                     # `uv run` uses the checkout's code
-uv run python -m unittest discover tests
+uv run python tests/run.py
 ```
+
+[CONTRIBUTING.md](https://github.com/roshanlam/finances/blob/main/CONTRIBUTING.md)
+has the rest, including how to add a bank.
 
 In a checkout the dashboard needs Node 20+: `uv run finances web` builds it on
 first run. While working on the frontend, run `uv run finances web` in one
@@ -704,9 +747,11 @@ Releasing a new version:
 rm -rf dist finances/web_dist
 (cd web && npm ci && npm run build) && cp -r web/dist finances/web_dist
 uv build && uv publish
+uv run python scripts/demo_site.py      # the live demo, then:
+(cd site && vercel link --yes --project finances-demo && vercel deploy --prod)
 ```
 
-427 tests, no test dependencies. The parser's golden-file tests skip when
+438 tests, no test dependencies. The parser's golden-file tests skip when
 `PDFs/` is empty, so a fresh clone runs the rest. The golden-file harness
 records per-statement extraction totals so a parser change that moves a number
 is visible:

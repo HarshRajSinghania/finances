@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.6.0] - 2026-11-11
+
+### Added
+- `finances report-bank statement.pdf`: the statement's layout as plain text,
+  every line at its own position, with names, merchants, amounts and account
+  numbers scrambled (the same way each time a value repeats). Dates and the
+  statement's own headings stay, and the header says what the parser read:
+  the bank, how many transactions, and whether they reconciled. The layout
+  turns back into a PDF the parser reads exactly like the original, so it is
+  what to attach to a "Support a bank" issue. `--check` parses a layout file
+  and says whether it reconciles.
+- One file per bank in `finances/banks/`: how its statements are recognised,
+  what is unusual about them, and where to download them. Adding a bank is a
+  new file instead of an edit to the parser.
+- Made-up statements for Amex, Capital One, Chase (card and checking) and
+  Discover in `tests/fixtures/banks/`, each exercising that bank's quirks. The
+  suite renders each to a PDF and requires it to be read as its bank and to
+  reconcile.
+- A live demo of the dashboard on made-up data, with nothing to install:
+  https://finances-demo-five.vercel.app (built by `scripts/demo_site.py`).
+- CONTRIBUTING.md, a code of conduct, issue and pull request templates, and
+  tests on every pull request.
+
+### Changed
+- The README opens with the demo and a per-bank accuracy table.
+- `banks.json` is replaced by the `[guide]` table in each bank's file.
+
 ## [0.5.0] - 2026-11-08
 
 ### Added

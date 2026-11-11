@@ -22,7 +22,7 @@ top-level `x-casaos` block for the store listing, following the v2 docs in
 1. Release a version that includes `FINANCES_ALLOWED_HOSTS` and let the docker
    workflow push `ghcr.io/roshanlam/finances:<version>` (amd64 and arm64).
    Make the ghcr package public.
-2. Set the image tag and `x-casaos.version` to it (both say `0.5.0` now; 0.4.1
+2. Set the image tag and `x-casaos.version` to it (both say `0.6.0` now; 0.4.1
    predates the env var). Update `update_at`.
 3. Prepare assets: `icon.svg` (the dashboard's `web/public/favicon.svg` works,
    ideally on a square background) and `screenshot-1.png` to `screenshot-3.png`

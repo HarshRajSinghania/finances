@@ -9,10 +9,10 @@ services:
 
   web:
     # For the official App Store, pin the multi-arch index digest as well:
-    #   ghcr.io/roshanlam/finances:0.5.0@sha256:<digest>
+    #   ghcr.io/roshanlam/finances:0.6.0@sha256:<digest>
     # (printed in the summary of the docker workflow run, or by
-    #  `docker buildx imagetools inspect ghcr.io/roshanlam/finances:0.5.0`).
-    image: ghcr.io/roshanlam/finances:0.5.0
+    #  `docker buildx imagetools inspect ghcr.io/roshanlam/finances:0.6.0`).
+    image: ghcr.io/roshanlam/finances:0.6.0
     user: "1000:1000"
     init: true
     restart: on-failure

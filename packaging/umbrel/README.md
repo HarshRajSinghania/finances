@@ -30,7 +30,7 @@ How it fits together:
    `.github/workflows/docker.yml` push `ghcr.io/roshanlam/finances:<version>`
    for amd64 and arm64. Make the ghcr package public.
 2. Set `version:` in `umbrel-app.yml` and the image tag in `docker-compose.yml`
-   to that release (both say `0.5.0` now; 0.4.1 predates the env var and would
+   to that release (both say `0.6.0` now; 0.4.1 predates the env var and would
    answer every request with 403).
 3. Pin the digest: `image: ghcr.io/roshanlam/finances:<version>@sha256:<digest>`.
    The workflow's run summary prints the exact line; or

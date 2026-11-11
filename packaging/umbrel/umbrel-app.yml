@@ -32,7 +32,7 @@ environment:
     note: Optional. Totals are reported in this currency, for example USD or EUR.
 category: finance
 name: finances
-version: "0.5.0"
+version: "0.6.0"
 tagline: See where your money goes, from statements checked against their own totals
 description: >-
   finances has no login of its own. Keep "Require Umbrel login" turned on for this app:
