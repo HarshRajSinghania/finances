@@ -1,0 +1,17 @@
+name = "Fidelity"
+investments = 'fidelity'
+
+[guide]
+url = "https://www.fidelity.com/customer-service/account-maintenance"
+help = "https://www.fidelity.com/accounts/mailings/content/statementshelp.shtml"
+history = "up to 10 years"
+bulk = "No: one PDF per statement period."
+steps = [
+    "Log in at fidelity.com",
+    "Open Statements under Accounts & Trade or Documents",
+    "Pick the account and statement period",
+    "Download the PDF",
+]
+exports = [
+    "PDF",
+]

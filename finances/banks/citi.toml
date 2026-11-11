@@ -1,0 +1,17 @@
+name = "Citi"
+statements = 'citibank|citi\.com|citi cards|costco anywhere'
+
+[guide]
+url = "https://www.citi.com/online-services/bank-statements"
+help = "https://www.citi.com/CRD/PDF/Request_previous_statements_PDF.pdf"
+history = "24 months online for bank accounts; older statements by request"
+bulk = "No: one PDF per statement; older statements must be requested first."
+steps = [
+    "Sign in at citi.com",
+    "Open the account",
+    "Go to Statements",
+    "Choose a statement and download the PDF",
+]
+exports = [
+    "PDF",
+]

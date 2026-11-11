@@ -1,0 +1,18 @@
+name = "Vanguard"
+investments = 'vanguard'
+
+[guide]
+url = "https://retirementplans.vanguard.com/VGApp/pe/faces/web/help/ihelp/HelpCenterAnswersAutonomyFeed.xhtml?id=974bd93e"
+help = "https://retirementplans.vanguard.com/VGApp/pe/faces/web/help/ihelp/HelpCenterTechnicalAutonomyFeed.xhtml?id=ef0db3f1"
+history = "transaction downloads cover the past 18 months; statements stay online at least 13 months"
+bulk = "Partly: up to 18 months of transactions download in one file; statements are one PDF each."
+steps = [
+    "Log in at vanguard.com",
+    "Open History, statements, and taxes",
+    "Download a statement PDF, or download transaction history",
+]
+exports = [
+    "PDF",
+    "CSV",
+    "QFX",
+]

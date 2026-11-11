@@ -1,0 +1,31 @@
+# finances layout v1
+# bank: Chase
+# transactions: 7
+# Made up by hand: every name, number and amount here is invented.
+# A checking statement: withdrawals print negative and a running balance
+# column sits to the right of the amount, so the parser has to pick the right column.
+#
+        JPMorgan Chase Bank, N.A.
+                                                                                December 04, 2025 through January 06, 2026
+                                                                                Account Number:   000000123457710
+        Jordan Sample
+
+        CHECKING SUMMARY                                    Chase Total Checking
+                                                                                                        AMOUNT
+        Beginning Balance                                                                            $1,832.07
+        Deposits and Additions                                                                        4,900.00
+        ATM & Debit Card Withdrawals                                                                    -66.31
+        Electronic Withdrawals                                                                         -988.16
+        Ending Balance                                                                               $5,677.60
+--- page ---
+        TRANSACTION DETAIL
+        DATE    DESCRIPTION                                                                             AMOUNT             BALANCE
+                Beginning Balance                                                                                        $1,832.07
+        12/05   Payroll Example Co Direct Dep PPD ID: 9000000001                                      2,450.00            4,282.07
+        12/08   Card Purchase 12/07 Key Food Brooklyn NY Card 7710                                      -63.41            4,218.66
+        12/15   Zelle Payment To Sam Example 1234567890                                                -400.00            3,818.66
+        12/19   Card Purchase 12/18 Mta*Nyct Paygo New York NY Card 7710                                 -2.90            3,815.76
+        12/22   Con Ed of NY Intellig Ppd ID: 0000000002                                                -88.16            3,727.60
+        01/02   Payroll Example Co Direct Dep PPD ID: 9000000001                                      2,450.00            6,177.60
+        01/05   Online Transfer To Sav ...4410 Transaction#: 1000000003                                -500.00            5,677.60
+                Ending Balance                                                                                           $5,677.60

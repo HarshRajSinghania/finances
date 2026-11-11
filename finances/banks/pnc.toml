@@ -1,0 +1,16 @@
+name = "PNC"
+statements = 'pnc bank'
+
+[guide]
+url = "https://www.pnc.com/en/personal-banking/banking/online-and-mobile-banking/online-statements.html"
+help = "https://www.pnc.com/en/personal-banking/banking/services/manage-credit-card-online.html"
+history = "up to 7 years for checking and savings; up to 4 years for credit cards"
+bulk = "No: one PDF per statement."
+steps = [
+    "Sign in to PNC Online Banking",
+    "Open the account, then Statements and Documents",
+    "Choose a statement and select View PDF to save it",
+]
+exports = [
+    "PDF",
+]

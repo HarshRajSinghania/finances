@@ -1,0 +1,17 @@
+name = "HSBC"
+statements = 'hsbc'
+
+[guide]
+url = "https://www.us.hsbc.com/online-banking/estatements/"
+help = "https://www.us.hsbc.com/online-banking/online-banking-faq/"
+history = "up to 7 years for eligible deposit accounts"
+bulk = "No: one statement at a time."
+steps = [
+    "Log on to HSBC Personal Internet Banking",
+    "Open eStatements",
+    "Pick the account and statement",
+    "Download or print it",
+]
+exports = [
+    "PDF",
+]

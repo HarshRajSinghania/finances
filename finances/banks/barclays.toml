@@ -1,0 +1,19 @@
+name = "Barclays"
+statements = 'barclay'
+
+[guide]
+url = "https://cards.barclaycardus.com/banking/how-to-view-statements/"
+help = "https://cards.barclaycardus.com/banking/help-center/faqs/general-additional-information/"
+history = "16 months"
+bulk = "No for statements: one PDF per month; transactions can be downloaded for financial software from Activity & Statements."
+steps = [
+    "Sign in at barclaysus.com or in the Barclays US app",
+    "Open Activity & Statements, then Statements",
+    "Pick a statement and download it",
+]
+exports = [
+    "PDF",
+    "Excel",
+    "QFX",
+    "QBO",
+]

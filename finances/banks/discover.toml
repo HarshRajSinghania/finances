@@ -1,0 +1,22 @@
+name = "Discover"
+statements = 'discover\b|discover\.com'
+notes = [
+    "The purchases table header (\"DATE PURCHASES MERCHANT CATEGORY AMOUNT\") is what starts the debit section.",
+    "\"APPLE PAY ENDING IN 3702\" appears under most transactions, more often than the card number, so it only counts when nothing stronger is found.",
+    "Two \"Minimum Payment Due\" figures are printed, one for the card and one for a plan.",
+]
+
+[guide]
+url = "https://www.discover.com/credit-cards/card-smarts/discover-bill-pay/"
+help = "https://www.discover.com/mobile/data/footer/faq_txn.html"
+history = "up to 7 years of card statements for paperless customers; 24 months of transactions"
+bulk = "No: one PDF per billing period."
+steps = [
+    "Sign in at discover.com",
+    "Open Statements",
+    "Pick a billing period",
+    "Download the statement PDF",
+]
+exports = [
+    "PDF",
+]

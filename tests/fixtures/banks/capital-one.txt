@@ -1,0 +1,34 @@
+# finances layout v1
+# bank: Capital One
+# transactions: 5
+# Made up by hand: every name, number and amount here is invented.
+# Capital One prints "Payments - $640.00" with a space after the sign,
+# and dates rows "Apr 2", which must not be read as the APR table.
+#
+        Capital One                                                   Quicksilver Card | Visa Signature ending in 5521
+        Mar 13, 2026 - Apr 9, 2026 | 28 days in Billing Cycle
+
+        Payment Information                                           Account Summary
+        New Balance                        $143.26                    Previous Balance                                     $640.00
+        Minimum Payment                     $25.00                    Payments                                -            $640.00
+        Due Date                       May 6, 2026                    Other Credits                           -              $0.00
+                                                                      Transactions                            +            $143.26
+                                                                      Cash Advances                           +              $0.00
+                                                                      Fees Charged                            +              $0.00
+                                                                      Interest Charged                        +              $0.00
+                                                                      New Balance                             =            $143.26
+--- page ---
+        Transactions
+        Trans Date  Post Date   Description                                                                                 Amount
+        Payments, Credits and Adjustments
+        Mar 25      Mar 25      CAPITAL ONE ONLINE PYMT                                                                  - $640.00
+        Transactions
+        Mar 16      Mar 17      SQ *CORNER BAKERY Portland OR                                                                $9.75
+        Mar 21      Mar 22      SHELL OIL 57444 Portland OR                                                                 $44.10
+        Apr 2       Apr 3       HULU 877-8244858 CA                                                                         $17.99
+        Apr 6       Apr 7       FRED-MEYER #0123 Portland OR                                                                $71.42
+        Total Transactions for This Period                                                                                 $143.26
+
+        Interest Charge Calculation
+        Type of Balance                 Annual Percentage Rate (APR)          Balance Subject to Interest Rate
+        Purchases                       28.99%                                                           $0.00

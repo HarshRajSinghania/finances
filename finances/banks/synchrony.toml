@@ -1,0 +1,15 @@
+name = "Synchrony"
+statements = 'synchrony'
+
+[guide]
+url = "https://www.synchrony.com/consumer-resources/paperless-statements"
+help = "https://www.synchrony.com/blog/bank/what-is-bank-statement"
+bulk = "No: one PDF per statement."
+steps = [
+    "Sign in at synchrony.com or in the MySynchrony app (Synchrony Bank: synchrony.com/banking)",
+    "Open Statements (bank accounts: Inbox, then Statements)",
+    "Pick a statement and download the PDF",
+]
+exports = [
+    "PDF",
+]

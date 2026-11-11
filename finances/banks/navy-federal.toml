@@ -1,0 +1,14 @@
+name = "Navy Federal"
+
+[guide]
+url = "https://www.navyfederal.org/services/mobile-online-banking/paperless-statements.html"
+history = "36 months"
+bulk = "No: one PDF per statement."
+steps = [
+    "Sign in to Navy Federal online banking",
+    "Choose Statements from the menu (app: More, then Account and Tax Statements)",
+    "Pick a statement and save the PDF",
+]
+exports = [
+    "PDF",
+]

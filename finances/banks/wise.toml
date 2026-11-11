@@ -1,0 +1,19 @@
+name = "Wise"
+
+[guide]
+url = "https://wise.com/help/articles/2736049/how-do-i-download-a-statement"
+bulk = "Yes: up to 365 days per statement, and several currencies at once as a zip; longer periods need multiple downloads."
+steps = [
+    "Sign in at wise.com or in the Wise app",
+    "Click your initials, then Statements and reports, then Statement",
+    "Choose the currencies and time period",
+    "Pick a format, confirm with your password, and download",
+]
+exports = [
+    "PDF",
+    "CSV",
+    "XLSX",
+    "MT940",
+    "QIF",
+    "CAMT.053",
+]

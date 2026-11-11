@@ -1,0 +1,26 @@
+name = "Amex"
+statements = 'american express|americanexpress\.com|amex'
+notes = [
+    "Long merchant names wrap onto the line above the date, leaving a date-and-amount row with no description; the line above is used.",
+    "Posting dates carry a footnote asterisk (\"03/25/26*\").",
+    "The start of the period is often printed nowhere but the filename (\"Amex-Apr_10_-_May_10_2026.pdf\").",
+]
+
+[guide]
+url = "https://www.americanexpress.com/us/customer-service/faq.download-export-transactions-software.html"
+help = "https://www.americanexpress.com/us/customer-service/faq.transaction-billing-statements-history.html"
+history = "about 2 years of transactions online; older archived statements can be requested"
+bulk = "Partly: transactions can be exported for a range of billing periods at once; statement PDFs are one per month."
+steps = [
+    "Sign in at americanexpress.com",
+    "Open Statements & Activity",
+    "Pick a billing period or date range",
+    "Use the download option and choose a file format",
+]
+exports = [
+    "PDF",
+    "CSV",
+    "Excel",
+    "QFX",
+    "QBO",
+]

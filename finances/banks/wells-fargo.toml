@@ -1,0 +1,20 @@
+name = "Wells Fargo"
+statements = 'wells ?fargo'
+
+[guide]
+url = "https://www.wellsfargo.com/mobile-online-banking/statements/"
+help = "https://www.wellsfargo.com/help/online-banking/statement-faqs/"
+history = "up to 7 years for deposit accounts; up to 2 years for credit cards"
+bulk = "No: statements download one at a time; account activity can be downloaded for a date range (up to 18 months for deposit accounts, 90 days for cards)."
+steps = [
+    "Sign on to Wells Fargo Online",
+    "Open Statements & Documents",
+    "Pick the account and statement",
+    "Download the PDF",
+]
+exports = [
+    "PDF",
+    "CSV",
+    "QFX",
+    "QBO",
+]

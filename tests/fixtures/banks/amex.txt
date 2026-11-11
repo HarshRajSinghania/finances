@@ -1,0 +1,38 @@
+# finances layout v1
+# bank: Amex
+# transactions: 7
+# Made up by hand: every name, number and amount here is invented.
+# Amex wraps a long merchant name onto the line above the date,
+# and marks posting dates with an asterisk.
+#
+        American Express                                                        Blue Cash Everyday
+                                                                                Closing Date    04/09/26
+                                                                                Account Ending  1-41005
+        Jordan Sample
+        100 Example Street
+
+        Account Summary
+        Previous Balance                           $1,204.18
+        Payments/Credits                          -$1,204.18
+        New Charges                                 +$212.75
+        Fees                                          +$0.00
+        Interest Charged                              +$0.00
+        New Balance                                  $212.75
+        Minimum Payment Due                           $40.00
+        Payment Due Date                            05/04/26
+--- page ---
+        Detail
+        Payments and Credits
+        03/14/26*     AUTOPAY PAYMENT RECEIVED - THANK YOU                                          -$1,204.18
+        New Charges
+        Card Member                     JORDAN SAMPLE
+        03/12/26      BLUE BOTTLE COFFEE OAKLAND CA                                                      $6.25
+        03/15/26*     TRADER JOE'S #127 BERKELEY CA                                                     $54.31
+        03/18/26      CITY OF BERKELEY PARKING                                                          $12.00
+                      UNITED AIRLINES 0162345678901 HOUSTON TX
+        03/22/26                                                                                        $86.00
+        03/29/26      NETFLIX.COM LOS GATOS CA                                                          $15.49
+        04/03/26      SAFEWAY #1784 OAKLAND CA                                                          $38.70
+        Total New Charges                                                                              $212.75
+
+        *Indicates posting date

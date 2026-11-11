@@ -1,6 +1,6 @@
 [project]
 name = "finances"
-version = "0.5.0"
+version = "0.6.0"
 description = "Personal finance and reconciliation from your own files: bank statement exports, Stripe payouts and ledgers. Every number is checked against its source, with evidence you can re-run. Ask questions with Claude, OpenAI or a local model. No bank login, no Plaid, runs on your machine."
 license = "MIT"
 license-files = ["LICENSE"]
@@ -46,12 +46,13 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["finances", "finances.verify"]
+packages = ["finances", "finances.verify", "finances.banks"]
 
 # The built dashboard rides along in the wheel, so `uvx finances web` works
 # without Node. The release workflow copies web/dist here before building.
 [tool.setuptools.package-data]
-finances = ["web_dist/**/*", "banks.json"]
+finances = ["web_dist/**/*"]
+"finances.banks" = ["*.toml"]
 
 [tool.uv]
 package = true

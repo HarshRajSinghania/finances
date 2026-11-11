@@ -158,25 +158,12 @@ HEADER_ROLES = [
 ]
 HEADER_ROLES = [(r, re.compile(p, re.I)) for r, p in HEADER_ROLES]
 
-ISSUERS = [
-    ("Chase",        r"chase\.com|jpmorgan|chase sapphire|freedom unlimited|chase ink"),
-    ("Amex",         r"american express|americanexpress\.com|amex"),
-    ("Citi",         r"citibank|citi\.com|citi cards|costco anywhere"),
-    ("Capital One",  r"capital ?one|capitalone\.com"),
-    ("Discover",     r"discover\b|discover\.com"),
-    ("Bank of America", r"bank of america|bankofamerica\.com|bofa"),
-    ("Wells Fargo",  r"wells ?fargo"),
-    ("Apple Card",   r"apple card|goldman sachs bank"),
-    ("Barclays",     r"barclay"),
-    ("US Bank",      r"u\.?s\.? bank|usbank\.com"),
-    ("Synchrony",    r"synchrony"),
-    ("PNC",          r"pnc bank"),
-    ("TD Bank",      r"td bank"),
-    ("Ally",         r"ally bank"),
-    ("Schwab",       r"charles schwab"),
-    ("HSBC",         r"hsbc"),
-    ("Amazon/Chase", r"amazon\.com (rewards|visa)"),
-]
+# Which bank a statement is from: one file per bank in finances/banks/, so a
+# new bank is a new file rather than an edit here.
+from finances.banks import investment_issuers as _investment_issuers  # noqa: E402
+from finances.banks import issuers as _issuers                        # noqa: E402
+
+ISSUERS = _issuers()
 
 PERIOD_PATTERNS = [
     r"opening/closing date\s*:?\s*(?P<a>%s)\s*[-\u2013]\s*(?P<b>%s)" % (DATE_ANY, DATE_ANY),
@@ -1151,11 +1138,7 @@ _STARTING_VALUE = re.compile(
     r"\s*:?\s*" + _VALUE, re.I)
 _BROKERAGE = re.compile(r"\b(brokerage|investment|portfolio|securities|holdings|"
                         r"ira|401\(?k\)?|roth)\b", re.I)
-INVESTMENT_ISSUERS = [("Fidelity", r"fidelity"), ("Vanguard", r"vanguard"),
-                      ("Schwab", r"schwab"), ("E*TRADE", r"e\s?\*\s?trade"),
-                      ("Robinhood", r"robinhood"), ("Merrill", r"merrill"),
-                      ("Interactive Brokers", r"interactive brokers"),
-                      ("Wealthfront", r"wealthfront"), ("Betterment", r"betterment")]
+INVESTMENT_ISSUERS = _investment_issuers()
 
 
 def investment_value(text: str):

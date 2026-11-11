@@ -1,0 +1,16 @@
+name = "TD Bank"
+statements = 'td bank'
+
+[guide]
+url = "https://www.td.com/us/en/personal-banking/online-banking"
+history = "up to 7 years"
+bulk = "No: one PDF per statement."
+steps = [
+    "Sign in to TD Bank Online Banking",
+    "Open Statements",
+    "Pick the account and statement",
+    "Download the PDF",
+]
+exports = [
+    "PDF",
+]

@@ -34,6 +34,7 @@ For bookkeeping and developers:
     finances evidence check      re-check an evidence report
     finances client intake ...   a store per client, folder intake, workpapers
     finances accuracy            per bank, how often statements reconcile first try
+    finances report-bank FILE    a statement's layout, scrambled, for a bank-support issue
 
     finances categorize stats    how much is actually labelled
     finances audit               the reckoning
@@ -80,6 +81,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "watch":      ("sources", "add new statements from Downloads as they arrive"),
     "feed":       ("simplefin", "optional live bank feed (SimpleFIN), checked by statements"),
     "accuracy":   ("accuracy", "how often each bank's statements reconcile on the first try"),
+    "report-bank": ("layout", "a statement's layout with your details scrambled, to report a bank"),
     "items":      ("lineitems", "the items behind Amazon (or any shop's) charges"),
     "client":     ("practice", "for bookkeepers: a store per client, intake, workpapers"),
     "web":        ("api", "serve the web dashboard on localhost"),

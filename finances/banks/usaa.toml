@@ -1,0 +1,15 @@
+name = "USAA"
+
+[guide]
+url = "https://www.usaa.com/support/managing-online-documents-faq/"
+help = "https://www.usaa.com/support/banking/"
+bulk = "No: one document at a time."
+steps = [
+    "Log on at usaa.com or in the USAA app",
+    "Open your profile menu, then My Documents",
+    "Filter by account and widen the date range for older items",
+    "Open a statement and download it",
+]
+exports = [
+    "PDF",
+]

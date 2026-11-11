@@ -1,0 +1,16 @@
+name = "Revolut"
+
+[guide]
+url = "https://help.revolut.com/help/profile-and-plan/managing-my-account/account-statement-per-chosen-currency/"
+help = "https://help.revolut.com/help/profile-and-plan/managing-my-account/get-a-pocket-s-statement/"
+bulk = "Yes: one statement can cover a custom timeframe, starting no earlier than the account opening date."
+steps = [
+    "Open the Revolut app",
+    "On Home, tap Accounts and pick the currency",
+    "Tap More (...), then Statement",
+    "Choose a timeframe and PDF or Excel, then Generate",
+]
+exports = [
+    "PDF",
+    "Excel",
+]

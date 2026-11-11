@@ -1,0 +1,21 @@
+name = "US Bank"
+statements = 'u\.?s\.? bank|usbank\.com'
+
+[guide]
+url = "https://www.usbank.com/customer-service/knowledge-base/KB0073947.html"
+help = "https://www.usbank.com/customer-service/knowledge-base/KB0069323.html"
+history = "up to 7 years of e-statements; up to 3 years of transaction downloads"
+bulk = "Partly: transaction history (up to 3 years) downloads in one file from online banking, not the app; statements are one per month."
+closes = "after the billing cycle closes"
+steps = [
+    "Sign in to U.S. Bank online banking (or the app: Statements & docs)",
+    "Choose the document type and account",
+    "Change the year for older statements",
+    "Select a statement to view or download",
+]
+exports = [
+    "PDF",
+    "CSV",
+    "QFX",
+    "QBO",
+]

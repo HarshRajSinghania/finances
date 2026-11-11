@@ -1,0 +1,18 @@
+name = "Ally"
+statements = 'ally bank'
+
+[guide]
+url = "https://www.ally.com/help/bank/account-information/"
+help = "https://www.ally.com/help/bank/tax-documents/"
+bulk = "Partly: transaction history downloads as one CSV or QFX file; statements are one per month."
+steps = [
+    "Sign in at ally.com",
+    "Open the account",
+    "Find statements in the account documents, or use the download icon in Transaction History",
+    "Choose CSV or Quicken (QFX) for transactions",
+]
+exports = [
+    "PDF",
+    "CSV",
+    "QFX",
+]

@@ -1,0 +1,26 @@
+# finances layout v1
+# bank: Discover
+# transactions: 4
+# Made up by hand: every name, number and amount here is invented.
+# Discover names the purchases column in the table header, and prints
+# "APPLE PAY ENDING IN" under transactions, more often than the card number.
+#
+        Discover it Card                                                        Account number ending in 8817
+        Open to Close Date: 02/10/2026 - 03/09/2026
+
+        ACCOUNT SUMMARY
+        Previous Balance                             $310.40
+        Payments and Credits                        -$310.40
+        Purchases                                   +$217.72
+        Interest Charged                              +$0.00
+        Fees Charged                                  +$0.00
+        New Balance                                  $217.72
+        Minimum Payment Due                           $35.00                    Payment Due Date    04/05/2026
+--- page ---
+        TRANSACTIONS
+        TRANS. DATE   PAYMENTS AND CREDITS                                                                        AMOUNT
+        02/22         DIRECTPAY FULL BALANCE                                                                    -$310.40
+        TRANS. DATE   PURCHASES                                       MERCHANT CATEGORY                           AMOUNT
+        02/14         TARGET 00012345 MINNEAPOLIS MN                        Merchandise                           $63.18
+        02/19         APPLE PAY ENDING IN 3702 COSTCO WHSE #0388            Warehouse Clubs                      $142.55
+        02/27         SPOTIFY USA 877-778-1161 NY                           Services                              $11.99

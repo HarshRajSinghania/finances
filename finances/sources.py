@@ -6,7 +6,7 @@ Statements are monthly, so the store always knows when the next one should
 exist: about a month after the last one closed, and a few days more before the
 bank has it ready. ``due()`` lists every account whose next statement should be
 downloadable by now, with the bank's own statements page and how to get there
-(``banks.json``, checked against each bank's help pages).
+(``banks/<bank>.toml``, checked against each bank's help pages).
 
 ``Watcher`` looks in a folder (Downloads, by default) for files that arrived
 after watching was turned on, and adds the ones that are statements or bank
@@ -17,15 +17,12 @@ a statement, and a CSV has to have a date and an amount column.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import threading
 import time
 from datetime import date, timedelta
-from functools import lru_cache
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 READY_AFTER = 34          # days after a statement closes until the next is usually out
 WATCH_KEY = "watch"       # settings: {"folder", "since", "seen": {name: [size, mtime]}, "log"}
 POLL_SECONDS = 20
@@ -36,13 +33,9 @@ STATEMENT_WORDS = re.compile(
     r"payment\s+due\s+date|opening\s+balance|kontoauszug|relev[ée]", re.I)
 
 
-@lru_cache(maxsize=1)
 def banks() -> dict:
-    try:
-        with open(os.path.join(HERE, "banks.json")) as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
-        return {}
+    from finances.banks import guides
+    return guides()
 
 
 def guide(issuer: str) -> dict | None:

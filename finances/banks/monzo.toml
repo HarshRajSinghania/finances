@@ -1,0 +1,17 @@
+name = "Monzo"
+
+[guide]
+url = "https://monzo.com/help/account-and-profile/bank-statement-how-to"
+help = "https://monzo.com/help/budgeting-overdrafts-savings/exporting-my-transactions"
+bulk = "Yes: one statement can cover any date range you pick."
+steps = [
+    "Open the Monzo app",
+    "On Home, tap the three dots under your card, then Bank statements",
+    "Pick a date range and format",
+    "Download or share the file",
+]
+exports = [
+    "PDF",
+    "CSV",
+    "QIF",
+]

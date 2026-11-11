@@ -1,0 +1,23 @@
+name = "Capital One"
+statements = 'capital ?one|capitalone\.com'
+notes = [
+    "The summary prints \"Payments - $1,200.00\", with a space between the sign and the currency symbol.",
+    "Rows dated \"Apr ..\" look like APR table rows to a case-blind filter; APR is matched case-sensitively.",
+    "Money in is split over two labels, both counted as payments.",
+]
+
+[guide]
+url = "https://www.capitalone.com/help-center/checking-savings/online-statements/"
+help = "https://www.capitalone.com/help-center/checking-savings/transaction-history/"
+history = "up to 7 years for active accounts (paperless enrollment required)"
+bulk = "No: one PDF per month."
+closes = "typically by the 6th of each month for bank accounts"
+steps = [
+    "Sign in at capitalone.com or in the Capital One app",
+    "Open the account",
+    "Choose View statements",
+    "Pick a month and download the PDF",
+]
+exports = [
+    "PDF",
+]

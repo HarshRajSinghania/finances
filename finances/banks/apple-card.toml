@@ -1,0 +1,20 @@
+name = "Apple Card"
+statements = 'apple card|goldman sachs bank'
+
+[guide]
+url = "https://card.apple.com"
+help = "https://support.apple.com/en-us/102284"
+bulk = "Yes for transactions: export a date range at once; statement PDFs are one per month."
+steps = [
+    "On iPhone, open Wallet, tap Apple Card, then Card Balance; or sign in at card.apple.com",
+    "Open Statements",
+    "Download a monthly statement PDF, or choose Export Transactions",
+    "Pick a date range and format (CSV, OFX, QFX)",
+]
+exports = [
+    "PDF",
+    "CSV",
+    "OFX",
+    "QFX",
+    "QBO",
+]

@@ -1,0 +1,2 @@
+name = "Amazon/Chase"
+statements = 'amazon\.com (rewards|visa)'

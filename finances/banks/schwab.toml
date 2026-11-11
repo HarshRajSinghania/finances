@@ -1,0 +1,19 @@
+name = "Schwab"
+statements = 'charles schwab'
+investments = 'schwab'
+
+[guide]
+url = "https://www.schwab.com/content/how-to-access-statements-on-schwab-mobile"
+help = "https://www.schwab.com/content/how-to-find-my-tax-documents"
+history = "up to 10 years of statements; up to 4 years of transaction history"
+bulk = "Partly: transaction history can be exported for a date range; statements are one PDF each."
+steps = [
+    "Sign in at schwab.com or in the Schwab app",
+    "Go to Accounts, then Statements & Tax Forms",
+    "Pick the account and document",
+    "Download the PDF",
+]
+exports = [
+    "PDF",
+    "CSV",
+]

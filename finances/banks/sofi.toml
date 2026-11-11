@@ -1,0 +1,15 @@
+name = "SoFi"
+
+[guide]
+url = "https://support.sofi.com/hc/en-us/articles/33259996847629-When-will-I-get-my-Checking-and-Savings-statement"
+help = "https://support.sofi.com/hc/en-us/articles/360040121231-How-do-I-view-download-statement-for-my-Invest-account-s"
+bulk = "No: one PDF per month."
+closes = "within the first 5 business days of each month"
+steps = [
+    "Log in at sofi.com or in the SoFi app",
+    "On the Banking home page, open Statements",
+    "Pick the month and year and download the PDF",
+]
+exports = [
+    "PDF",
+]
